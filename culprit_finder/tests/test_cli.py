@@ -193,6 +193,7 @@ def test_cli_success(
     end_sha="sha2",
     workflow_file="test.yml",
     has_culprit_finder_workflow=has_culprit_workflow,
+    retries=0,
   )
   mock_finder.return_value.run_bisection.assert_called_once()
 

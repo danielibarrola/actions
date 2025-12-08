@@ -1,6 +1,6 @@
 """Tests for the CulpritFinder class."""
 
-from culprit_finder import culprit_finder
+from culprit_finder import culprit_finder, github
 import pytest
 from datetime import datetime, timezone
 
@@ -66,6 +66,35 @@ def test_wait_for_workflow_completion_success(mocker, finder):
     assert call_args[0][0] == workflow
 
 
+def test_test_commit_with_retries(mocker):
+  """Tests that _test_commit retries the specified number of times on failure."""
+  mocker.patch("culprit_finder.culprit_finder.github")
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    retries=2,
+  )
+
+  branch = "test-branch"
+  commit_sha = "sha1"
+
+  mock_wait = mocker.patch.object(finder, "_wait_for_workflow_completion")
+  mock_wait.side_effect = [
+    {"conclusion": "failure"},  # Initial attempt
+    {"conclusion": "failure"},  # First retry
+    {"conclusion": "success"},  # Second retry
+  ]
+
+  is_good = finder._test_commit(commit_sha, branch)
+
+  assert is_good is True
+  assert mock_wait.call_count == 3
+
+
 @pytest.mark.parametrize("finder", [True, False], indirect=True)
 def test_test_commit_success(mocker, finder):
   """Tests that _test_commit triggers the workflow and returns True on success."""
@@ -106,7 +135,7 @@ def test_test_commit_failure(mocker, finder):
   assert finder._test_commit("sha", "branch") is False
 
 
-def _create_commit(sha: str, message: str) -> dict:
+def _create_commit(sha: str, message: str) -> github.Commit:
   return {"sha": sha, "commit": {"message": message}}
 
 

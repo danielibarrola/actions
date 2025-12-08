@@ -22,6 +22,7 @@ class CulpritFinder:
     end_sha: str,
     workflow_file: str,
     has_culprit_finder_workflow: bool,
+    retries: int = 0,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -39,6 +40,7 @@ class CulpritFinder:
     self._culprit_finder_workflow_file = CULPRIT_FINDER_WORKFLOW_NAME
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
+    self.retries = retries
 
   def _wait_for_workflow_completion(
     self,
@@ -137,9 +139,18 @@ class CulpritFinder:
       commit_sha,
       previous_run_id,
     )
-    if not run:
-      logging.error("Workflow failed to complete")
-      return False
+
+    if not run or run["conclusion"] != "success":
+      for attempt in range(self.retries):
+        run = self._wait_for_workflow_completion(
+          workflow_to_trigger, branch_name, commit_sha, previous_run_id
+        )
+
+      if not run:
+        logging.error(
+          f"Workflow run for commit {commit_sha} on branch {branch_name} failed to complete."
+        )
+        return False
 
     return run["conclusion"] == "success"
 
