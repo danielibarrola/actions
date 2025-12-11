@@ -24,6 +24,7 @@ class CulpritFinder:
     workflow_file: str,
     has_culprit_finder_workflow: bool,
     github_client: github.GithubClient,
+    job: str | None = None,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -34,6 +35,7 @@ class CulpritFinder:
         end_sha: The SHA of the first known bad commit.
         workflow_file: The name of the workflow file to test (e.g., 'build.yml').
         has_culprit_finder_workflow: Whether the repo being tested has a Culprit Finder workflow.
+        job: The specific job name within the workflow to monitor for pass/fail.
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -42,6 +44,7 @@ class CulpritFinder:
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
     self._gh_client = github_client
+    self._job = job
 
   def _wait_for_workflow_completion(
     self,
@@ -97,6 +100,22 @@ class CulpritFinder:
       time.sleep(poll_interval)
     raise TimeoutError("Timed out waiting for workflow to complete")
 
+  def _find_job(self, jobs: list[github.Job]) -> github.Job:
+    for job in jobs:
+      if self._has_culprit_finder_workflow:
+        # when calling a workflow from another workflow, the job name is in the format "Caller Job Name / Called Job Name"
+        job_name = job["name"].split("/")
+        if job_name[-1].strip() == self._job:
+          return job
+      elif job["name"] == self._job:
+        return job
+    logging.error(
+      "Job %s not found, jobs in workflow %s",
+      self._job,
+      self._workflow_file,
+    )
+    raise ValueError(f"Job {self._job} not found in workflow {self._workflow_file}")
+
   def _test_commit(
     self,
     commit_sha: str,
@@ -146,6 +165,12 @@ class CulpritFinder:
     if not run:
       logging.error("Workflow failed to complete")
       return False
+
+    if self._job:
+      jobs = self._gh_client.get_jobs(run["databaseId"])
+      job = self._find_job(jobs)
+
+      return job["conclusion"] == "success"
 
     return run["conclusion"] == "success"
 

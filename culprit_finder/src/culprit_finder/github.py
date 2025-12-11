@@ -38,6 +38,22 @@ class Run(TypedDict):
   url: str
 
 
+class Job(TypedDict):
+  """Represents a GitHub Actions workflow job.
+
+  Attributes:
+      name: The name of the job.
+      databaseId: The unique identifier for the job in the GitHub database.
+      conclusion: The conclusion of the job (e.g., "success", "failure", "cancelled").
+      status: The current status of the job (e.g., "completed", "in_progress", "queued").
+  """
+
+  name: str
+  databaseId: int
+  conclusion: str
+  status: str
+
+
 class GithubClient:
   """
   A client for interacting with the GitHub API via the gh CLI.
@@ -223,3 +239,26 @@ class GithubClient:
     cmd = ["workflow", "list", "--json", "path,name", "--repo", self.repo]
     workflows = self._run_command(cmd)
     return json.loads(workflows)
+
+  def get_jobs(self, run_id: int) -> list[Job]:
+    """
+    Retrieves a list of jobs for a run
+
+    Args:
+        run_id: id of the run
+
+    Returns:
+        A list of jobs
+    """
+    cmd = [
+      "run",
+      "view",
+      str(run_id),
+      "--json",
+      "name,databaseId,jobs",
+      "--repo",
+      self.repo,
+    ]
+    run_json = self._run_command(cmd)
+    run = json.loads(run_json)
+    return run["jobs"] if "jobs" in run else []
