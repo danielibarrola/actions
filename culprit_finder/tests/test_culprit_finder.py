@@ -73,7 +73,7 @@ def test_wait_for_workflow_completion_success(mocker, finder, mock_gh_client):
     assert call_args[0][0] == workflow
 
 
-def test_test_commit_with_retries(mocker):
+def test_test_commit_with_retries(mocker, mock_gh_client):
   """Tests that _test_commit retries the specified number of times on failure."""
   mocker.patch("culprit_finder.culprit_finder.github")
 
@@ -83,6 +83,7 @@ def test_test_commit_with_retries(mocker):
     end_sha="end_sha",
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
     retries=2,
   )
 

@@ -35,6 +35,7 @@ class CulpritFinder:
         end_sha: The SHA of the first known bad commit.
         workflow_file: The name of the workflow file to test (e.g., 'build.yml').
         has_culprit_finder_workflow: Whether the repo being tested has a Culprit Finder workflow.
+        retries: Number of times to retry workflow runs in case of failure.
     """
     self._repo = repo
     self._start_sha = start_sha
