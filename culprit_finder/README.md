@@ -60,6 +60,8 @@ from a failed workflow run. If provided, the tool infers the repository, workflo
 - `--end`: The full or short SHA of the first known **bad** commit. (Optional URL is provided).
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
 (Optional if URL is provided).
+- `--job` (Optional): The specific job name within the workflow to monitor for pass/fail.
+If not provided, the tool checks the overall workflow conclusion.
 - `--clear-cache`: (Optional) Deletes the local state file before execution to start a fresh bisection.
 
 ### State Persistence and Resuming

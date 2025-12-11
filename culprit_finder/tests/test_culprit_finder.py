@@ -5,6 +5,7 @@ from culprit_finder import culprit_finder_state
 import re
 import pytest
 from datetime import datetime, timezone
+import random
 
 WORKFLOW_FILE = "test_workflow.yml"
 CULPRIT_WORKFLOW = "culprit_finder.yml"
@@ -24,9 +25,8 @@ def mock_state_persister(mocker):
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister):
-  """Returns a CulpritFinder instance for testing."""
-  state: culprit_finder_state.CulpritFinderState = {
+def mock_state() -> culprit_finder_state.CulpritFinderState:
+  return {
     "repo": "test_repo",
     "workflow": "test_workflow",
     "original_start": "original_start_sha",
@@ -35,6 +35,11 @@ def finder(request, mock_gh_client, mock_state_persister):
     "current_bad": "",
     "cache": {},
   }
+
+
+@pytest.fixture
+def finder(request, mock_gh_client, mock_state_persister, mock_state):
+  """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
   return culprit_finder.CulpritFinder(
     repo=REPO,
@@ -43,7 +48,7 @@ def finder(request, mock_gh_client, mock_state_persister):
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=mock_gh_client,
-    state=state,
+    state=mock_state,
     state_persister=mock_state_persister,
   )
 
@@ -132,6 +137,117 @@ def test_test_commit_failure(mocker, finder, mock_gh_client):
   mock_gh_client.get_latest_run.return_value = None
 
   assert finder._test_commit("sha", "branch") is False
+
+
+def _create_job(name: str, conclusion: str) -> github.Job:
+  return {
+    "name": name,
+    "conclusion": conclusion,
+    "status": "completed",
+    "databaseId": random.randint(1, 10000),
+  }
+
+
+@pytest.mark.parametrize("has_culprit_workflow", [True, False])
+def test_test_commit_with_specific_job(
+  mocker, mock_gh_client, has_culprit_workflow, mock_state, mock_state_persister
+):
+  """Tests that _test_commit checks a specific job when the job parameter is set."""
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=has_culprit_workflow,
+    github_client=mock_gh_client,
+    job="test-job",
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  branch = "test-branch"
+  commit_sha = "sha1"
+  run_id = 123
+
+  mock_wait = mocker.patch.object(finder, "_wait_for_workflow_completion")
+  mock_wait.return_value = {"conclusion": "failure", "databaseId": run_id}
+
+  prefix = "Caller Job / " if has_culprit_workflow else ""
+
+  mock_gh_client.get_run_jobs.return_value = [
+    _create_job(f"{prefix}test-job", "success"),
+    _create_job(f"{prefix}other-job", "failure"),
+  ]
+
+  is_good = finder._test_commit(commit_sha, branch)
+
+  assert is_good is True
+  mock_gh_client.get_run_jobs.assert_called_once_with(run_id)
+
+  if has_culprit_workflow:
+    expected_workflow = CULPRIT_WORKFLOW
+    expected_inputs = {"workflow-to-debug": WORKFLOW_FILE}
+  else:
+    expected_workflow = WORKFLOW_FILE
+    expected_inputs = {}
+
+  mock_gh_client.trigger_workflow.assert_called_once_with(
+    expected_workflow,
+    branch,
+    expected_inputs,
+  )
+
+
+@pytest.mark.parametrize("has_culprit_workflow", [True, False])
+def test_find_job(
+  mock_gh_client, has_culprit_workflow, mock_state, mock_state_persister
+):
+  """Tests that _find_job correctly finds a job with or without culprit workflow."""
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=has_culprit_workflow,
+    github_client=mock_gh_client,
+    job="target-job",
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  prefix = "Caller Job / " if has_culprit_workflow else ""
+  jobs = [
+    _create_job(f"{prefix}other-job", "success"),
+    _create_job(f"{prefix}target-job", "failure"),
+    _create_job(f"{prefix}another-job", "success"),
+  ]
+
+  job = finder._get_target_job(jobs)
+
+  assert job == jobs[1]
+
+
+def test_find_job_not_found(mock_gh_client, mock_state, mock_state_persister):
+  """Tests that _find_job raises ValueError when the job is not found."""
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=False,
+    github_client=mock_gh_client,
+    job="missing-job",
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  jobs = [
+    _create_job("job1", "success"),
+    _create_job("job2", "success"),
+  ]
+
+  with pytest.raises(ValueError, match="Job missing-job not found in workflow"):
+    finder._get_target_job(jobs)
 
 
 def _create_commit(sha: str, message: str) -> github.Commit:

@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import time
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, NotRequired
 
 
 class Commit(TypedDict):
@@ -18,6 +18,22 @@ class Commit(TypedDict):
 class Workflow(TypedDict):
   name: str
   path: str
+
+
+class Job(TypedDict):
+  """Represents a GitHub Actions workflow job.
+
+  Attributes:
+      name: The name of the job.
+      databaseId: The unique identifier for the job in the GitHub database.
+      conclusion: The conclusion of the job (e.g., "success", "failure", "cancelled").
+      status: The current status of the job (e.g., "completed", "in_progress", "queued").
+  """
+
+  name: str
+  databaseId: int
+  conclusion: str
+  status: str
 
 
 class Run(TypedDict):
@@ -46,6 +62,7 @@ class Run(TypedDict):
   workflowDatabaseId: int
   headBranch: str
   event: str
+  jobs: NotRequired[list[Job]]
 
 
 class GithubClient:
@@ -300,12 +317,25 @@ class GithubClient:
       "view",
       run_id,
       "--json",
-      "headSha,status,createdAt,conclusion,databaseId,url,workflowName,workflowDatabaseId,headBranch,event",
+      "headSha,status,createdAt,conclusion,databaseId,url,workflowName,workflowDatabaseId,headBranch,event,jobs",
       "--repo",
       self.repo,
     ]
     run = self._run_command(cmd)
     return json.loads(run)
+
+  def get_run_jobs(self, run_id: int) -> list[Job]:
+    """
+    Retrieves the list of jobs for a specific workflow run.
+
+    Args:
+        run_id: The database ID of the workflow run.
+
+    Returns:
+        A list of Job objects. Returns an empty list if no jobs are found.
+    """
+    run = self.get_run(str(run_id))
+    return run.get("jobs", [])
 
   def get_run_from_url(self, url: str) -> Run:
     """

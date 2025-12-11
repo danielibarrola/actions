@@ -58,6 +58,11 @@ def main() -> None:
     help="Workflow filename (e.g., build_and_test.yml)",
   )
   parser.add_argument(
+    "--job",
+    required=False,
+    help="The specific job name within the workflow to monitor for pass/fail",
+  )
+  parser.add_argument(
     "--clear-cache",
     action="store_true",
     help="Deletes the local state file before execution",
@@ -111,6 +116,7 @@ def main() -> None:
   logging.info("Start commit: %s", start)
   logging.info("End commit: %s", end)
   logging.info("Workflow: %s", workflow_file_name)
+  logging.info("Job: %s", args.job)
 
   state_persister = culprit_finder_state.StatePersister(
     repo=repo, workflow=workflow_file_name
@@ -164,6 +170,7 @@ def main() -> None:
     github_client=gh_client,
     state=state,
     state_persister=state_persister,
+    job=args.job,
   )
 
   try:
