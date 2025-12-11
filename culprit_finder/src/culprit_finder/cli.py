@@ -35,14 +35,16 @@ def main() -> None:
   """
   parser = argparse.ArgumentParser(description="Culprit finder for GitHub Actions.")
   parser.add_argument(
+    "-r",
     "--repo",
     required=True,
     help="Target GitHub repository (e.g., owner/repo)",
     type=_validate_repo,
   )
-  parser.add_argument("--start", required=True, help="Last known good commit SHA")
-  parser.add_argument("--end", required=True, help="First known bad commit SHA")
+  parser.add_argument("-s", "--start", required=True, help="Last known good commit SHA")
+  parser.add_argument("-e", "--end", required=True, help="First known bad commit SHA")
   parser.add_argument(
+    "-w",
     "--workflow",
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
@@ -57,7 +59,9 @@ def main() -> None:
 
   args = parser.parse_args()
 
-  is_authenticated_with_cli = github.check_auth_status()
+  gh_client = github.GithubClient(repo=args.repo)
+
+  is_authenticated_with_cli = gh_client.check_auth_status()
   has_access_token = os.environ.get("GH_TOKEN") is not None
 
   if not is_authenticated_with_cli and not has_access_token:
@@ -72,7 +76,7 @@ def main() -> None:
 
   has_culprit_finder_workflow = any(
     wf["path"] == ".github/workflows/culprit_finder.yml"
-    for wf in github.get_workflows()
+    for wf in gh_client.get_workflows()
   )
 
   logging.info("Using culprit finder workflow: %s", has_culprit_finder_workflow)
@@ -83,11 +87,12 @@ def main() -> None:
     end_sha=args.end,
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
+    github_client=gh_client,
     retries=args.retry,
   )
   culprit_commit = finder.run_bisection()
   if culprit_commit:
-    commit_message = culprit_commit["commit"]["message"].splitlines()[0]
+    commit_message = culprit_commit["message"].splitlines()[0]
     print(
       f"\nThe culprit commit is: {commit_message} (SHA: {culprit_commit['sha']})",
     )

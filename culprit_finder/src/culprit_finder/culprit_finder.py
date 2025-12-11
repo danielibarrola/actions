@@ -6,6 +6,7 @@ This module defines the `CulpritFinder` class, which orchestrates the bisection 
 
 import time
 import logging
+import uuid
 from culprit_finder import github
 
 
@@ -22,6 +23,7 @@ class CulpritFinder:
     end_sha: str,
     workflow_file: str,
     has_culprit_finder_workflow: bool,
+    github_client: github.GithubClient,
     retries: int = 0,
   ):
     """
@@ -40,6 +42,7 @@ class CulpritFinder:
     self._culprit_finder_workflow_file = CULPRIT_FINDER_WORKFLOW_NAME
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
+    self._gh_client = github_client
     self.retries = retries
 
   def _wait_for_workflow_completion(
@@ -49,6 +52,7 @@ class CulpritFinder:
     commit_sha: str,
     previous_run_id: int | None,
     poll_interval=30,
+    timeout=7200,  # 2 hours
   ) -> github.Run | None:
     """
     Polls for the completion of the most recent workflow_dispatch run on the branch.
@@ -63,8 +67,9 @@ class CulpritFinder:
     Returns:
         A dictionary containing workflow run details if successful and completed
     """
-    while True:
-      latest_run = github.get_latest_run(workflow_file, branch_name)
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+      latest_run = self._gh_client.get_latest_run(workflow_file, branch_name)
 
       if not latest_run:
         logging.info(
@@ -92,6 +97,7 @@ class CulpritFinder:
       )
 
       time.sleep(poll_interval)
+    raise TimeoutError("Timed out waiting for workflow to complete")
 
   def _test_commit(
     self,
@@ -124,10 +130,10 @@ class CulpritFinder:
     )
 
     # Get the ID of the previous run (if any) to distinguish it from the new one we are about to trigger
-    previous_run = github.get_latest_run(workflow_to_trigger, branch_name)
+    previous_run = self._gh_client.get_latest_run(workflow_to_trigger, branch_name)
     previous_run_id = previous_run["databaseId"] if previous_run else None
 
-    github.trigger_workflow(
+    self._gh_client.trigger_workflow(
       workflow_to_trigger,
       branch_name,
       inputs,
@@ -169,7 +175,7 @@ class CulpritFinder:
       as the cause of the specified issue. If the bisection process does not
       identify a commit, None is returned.
     """
-    commits = github.compare_commits(self._repo, self._start_sha, self._end_sha)
+    commits = self._gh_client.compare_commits(self._start_sha, self._end_sha)
     if not commits:
       logging.info("No commits found between %s and %s", self._start_sha, self._end_sha)
       return None
@@ -182,19 +188,19 @@ class CulpritFinder:
       mid_idx = (good_idx + bad_idx) // 2
 
       commit_sha = commits[mid_idx]["sha"]
-      branch_name = f"culprit-finder/test-{commit_sha}"
+      branch_name = f"culprit-finder/test-{commit_sha}_{uuid.uuid4()}"
 
       # Ensure the branch does not exist from a previous run
-      if not github.check_branch_exists(self._repo, branch_name):
-        github.create_branch(self._repo, branch_name, commit_sha)
+      if not self._gh_client.check_branch_exists(branch_name):
+        self._gh_client.create_branch(branch_name, commit_sha)
         logging.info("Created branch %s", branch_name)
 
       try:
         is_good = self._test_commit(commit_sha, branch_name)
       finally:
-        if github.check_branch_exists(self._repo, branch_name):
+        if self._gh_client.check_branch_exists(branch_name):
           logging.info("Deleting branch %s", branch_name)
-          github.gh_delete_branch(self._repo, branch_name)
+          self._gh_client.delete_branch(branch_name)
 
       if is_good:
         good_idx = mid_idx
