@@ -5,7 +5,7 @@ Module for interacting with the GitHub API via the gh CLI.
 import subprocess
 import json
 import logging
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, NotRequired
 
 
 class Commit(TypedDict):
@@ -18,6 +18,22 @@ class Workflow(TypedDict):
   path: str
 
 
+class Job(TypedDict):
+  """Represents a GitHub Actions workflow job.
+
+  Attributes:
+      name: The name of the job.
+      databaseId: The unique identifier for the job in the GitHub database.
+      conclusion: The conclusion of the job (e.g., "success", "failure", "cancelled").
+      status: The current status of the job (e.g., "completed", "in_progress", "queued").
+  """
+
+  name: str
+  databaseId: int
+  conclusion: str
+  status: str
+
+
 class Run(TypedDict):
   """Represents a GitHub Actions workflow run.
 
@@ -28,6 +44,7 @@ class Run(TypedDict):
       conclusion: The conclusion of the workflow run if completed (e.g., "success", "failure", "cancelled"). Optional.
       databaseId: The unique identifier for the workflow run in the GitHub database.
       url: The URL to the workflow run on GitHub.
+      jobs: A list of jobs associated with the workflow run. Optional.
   """
 
   headSha: str
@@ -36,6 +53,7 @@ class Run(TypedDict):
   conclusion: Optional[str]
   databaseId: int
   url: str
+  jobs: NotRequired[list[Job]]
 
 
 class GithubClient:
@@ -223,3 +241,38 @@ class GithubClient:
     cmd = ["workflow", "list", "--json", "path,name", "--repo", self.repo]
     workflows = self._run_command(cmd)
     return json.loads(workflows)
+
+  def get_run(self, run_id: str) -> Run:
+    """
+    Retrieves detailed information about a specific workflow run.
+
+    Args:
+        run_id: The unique database ID or number of the workflow run.
+
+    Returns:
+        A Run object containing metadata such as head SHA, status, and conclusion.
+    """
+    cmd = [
+      "run",
+      "view",
+      run_id,
+      "--json",
+      "headSha,status,createdAt,conclusion,databaseId,url,jobs",
+      "--repo",
+      self.repo,
+    ]
+    run = self._run_command(cmd)
+    return json.loads(run)
+
+  def get_run_jobs(self, run_id: int) -> list[Job]:
+    """
+    Retrieves the list of jobs for a specific workflow run.
+
+    Args:
+        run_id: The database ID of the workflow run.
+
+    Returns:
+        A list of Job objects. Returns an empty list if no jobs are found.
+    """
+    run = self.get_run(str(run_id))
+    return run.get("jobs", [])

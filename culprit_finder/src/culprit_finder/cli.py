@@ -49,6 +49,11 @@ def main() -> None:
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
   )
+  parser.add_argument(
+    "--job",
+    required=False,
+    help="The specific job name within the workflow to monitor for pass/fail",
+  )
 
   args = parser.parse_args()
 
@@ -65,6 +70,7 @@ def main() -> None:
   logging.info("Start commit: %s", args.start)
   logging.info("End commit: %s", args.end)
   logging.info("Workflow: %s", args.workflow)
+  logging.info("Job: %s", args.job)
 
   has_culprit_finder_workflow = any(
     wf["path"] == ".github/workflows/culprit_finder.yml"
@@ -80,6 +86,7 @@ def main() -> None:
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=gh_client,
+    job=args.job,
   )
   culprit_commit = finder.run_bisection()
   if culprit_commit:

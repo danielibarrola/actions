@@ -24,6 +24,7 @@ class CulpritFinder:
     workflow_file: str,
     has_culprit_finder_workflow: bool,
     github_client: github.GithubClient,
+    job: str | None = None,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -34,6 +35,7 @@ class CulpritFinder:
         end_sha: The SHA of the first known bad commit.
         workflow_file: The name of the workflow file to test (e.g., 'build.yml').
         has_culprit_finder_workflow: Whether the repo being tested has a Culprit Finder workflow.
+        job: The specific job name within the workflow to monitor for pass/fail.
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -42,6 +44,7 @@ class CulpritFinder:
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
     self._gh_client = github_client
+    self._job = job
 
   def _wait_for_workflow_completion(
     self,
@@ -97,6 +100,40 @@ class CulpritFinder:
       time.sleep(poll_interval)
     raise TimeoutError("Timed out waiting for workflow to complete")
 
+  def _get_target_job(self, jobs: list[github.Job]) -> github.Job:
+    """
+    Finds a specific job in the list, handling nested caller/called names.
+
+    Args:
+        jobs: A list of Job objects from a workflow run.
+
+    Returns:
+        The Job object that matches the target job name.
+
+    Raises:
+        ValueError: If the specified job is not found in the workflow run.
+    """
+
+    def get_job_name(name: str) -> str:
+      if self._has_culprit_finder_workflow:
+        # when calling a workflow from another workflow, the job name is
+        # in the format "Caller Job Name / Called Job Name"
+        return name.split("/")[-1].strip()
+      return name
+
+    target_job = next(
+      (job for job in jobs if get_job_name(job["name"]) == self._job), None
+    )
+    if target_job:
+      return target_job
+
+    logging.error(
+      "Job %s not found, jobs in workflow %s",
+      self._job,
+      self._workflow_file,
+    )
+    raise ValueError(f"Job {self._job} not found in workflow {self._workflow_file}")
+
   def _test_commit(
     self,
     commit_sha: str,
@@ -146,6 +183,11 @@ class CulpritFinder:
     if not run:
       logging.error("Workflow failed to complete")
       return False
+
+    if self._job:
+      jobs = self._gh_client.get_run_jobs(run["databaseId"])
+      target_job = self._get_target_job(jobs)
+      return target_job["conclusion"] == "success"
 
     return run["conclusion"] == "success"
 

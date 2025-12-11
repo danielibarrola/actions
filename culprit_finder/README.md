@@ -57,6 +57,8 @@ culprit-finder --repo <OWNER/REPO> --start <GOOD_SHA> --end <BAD_SHA> --workflow
 - `--start`: The full or short SHA of the last known **good** commit.
 - `--end`: The full or short SHA of the first known **bad** commit.
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
+- `--job` (Optional): The specific job name within the workflow to monitor for pass/fail.
+If not provided, the tool checks the overall workflow conclusion.
 
 ### Example
 
@@ -66,6 +68,7 @@ culprit-finder
 --start a1b2c3d
 --end e5f6g7h
 --workflow build_and_test.yml
+--job unit-tests
 ```
 
 
