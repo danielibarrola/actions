@@ -62,6 +62,11 @@ def main() -> None:
     action="store_true",
     help="Deletes the local state file before execution",
   )
+  parser.add_argument(
+    "--no-cache",
+    action="store_true",
+    help="Disabled cached results. This will run the workflow on all commits.",
+  )
 
   args = parser.parse_args()
 
@@ -107,10 +112,13 @@ def main() -> None:
   if not workflow_file_name:
     parser.error("the following arguments are required: -w/--workflow")
 
+  use_cache = not args.no_cache
+
   logging.info("Initializing culprit finder for %s", repo)
   logging.info("Start commit: %s", start)
   logging.info("End commit: %s", end)
   logging.info("Workflow: %s", workflow_file_name)
+  logging.info("Use cache: %s", use_cache)
 
   state_persister = culprit_finder_state.StatePersister(
     repo=repo, workflow=workflow_file_name
@@ -164,6 +172,7 @@ def main() -> None:
     github_client=gh_client,
     state=state,
     state_persister=state_persister,
+    use_cache=use_cache,
   )
 
   try:

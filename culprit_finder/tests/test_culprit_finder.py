@@ -24,9 +24,8 @@ def mock_state_persister(mocker):
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister):
-  """Returns a CulpritFinder instance for testing."""
-  state: culprit_finder_state.CulpritFinderState = {
+def mock_state() -> culprit_finder_state.CulpritFinderState:
+  return {
     "repo": "test_repo",
     "workflow": "test_workflow",
     "original_start": "original_start_sha",
@@ -35,6 +34,11 @@ def finder(request, mock_gh_client, mock_state_persister):
     "current_bad": "",
     "cache": {},
   }
+
+
+@pytest.fixture
+def finder(request, mock_gh_client, mock_state_persister, mock_state):
+  """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
   return culprit_finder.CulpritFinder(
     repo=REPO,
@@ -43,7 +47,8 @@ def finder(request, mock_gh_client, mock_state_persister):
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=mock_gh_client,
-    state=state,
+    use_cache=False,
+    state=mock_state,
     state_persister=mock_state_persister,
   )
 
@@ -88,7 +93,7 @@ def test_wait_for_workflow_completion_success(mocker, finder, mock_gh_client):
   assert mock_gh_client.get_latest_run.call_count == 3
 
   for call_args in mock_gh_client.get_latest_run.call_args_list:
-    assert call_args[0][0] == workflow
+    assert call_args.kwargs["workflow_id"] == workflow
 
 
 @pytest.mark.parametrize("finder", [True, False], indirect=True)
@@ -346,3 +351,184 @@ def test_run_bisection_skips_testing_cached_commit(mocker, finder, mock_gh_clien
   finder._state_persister.save.assert_called_once()
   saved_state = finder._state_persister.save.call_args[0][0]
   assert saved_state["cache"]["c2"] == "FAIL"
+
+
+def test_run_bisection_uses_cache(
+  mocker, mock_gh_client, mock_state, mock_state_persister
+):
+  """Tests that bisection uses cached results when available."""
+  commits = [
+    _create_commit("c0", "m0"),
+    _create_commit("c1", "m1"),
+    _create_commit("c2", "m2"),
+  ]
+  mock_gh_client.compare_commits.return_value = commits
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    use_cache=True,
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  # Scenario:
+  # c1 is checked first (mid). Cache returns failure. -> bad_idx = 1
+  # c0 is checked next. Cache returns success. -> good_idx = 0
+  # Result: c1 is culprit.
+
+  def get_latest_run_side_effect(**kwargs):
+    commit = kwargs.get("commit")
+    if kwargs.get("status") == "completed":
+      if commit == "c1":
+        return {"conclusion": "failure"}
+      if commit == "c0":
+        return {"conclusion": "success"}
+    return None
+
+  mock_gh_client.get_latest_run.side_effect = get_latest_run_side_effect
+
+  mock_test_commit = mocker.patch.object(finder, "_test_commit")
+
+  culprit = finder.run_bisection()
+
+  assert culprit == commits[1]
+  mock_test_commit.assert_not_called()
+  mock_gh_client.create_branch.assert_not_called()
+
+
+def test_run_bisection_mixed_cache(
+  mocker, mock_gh_client, mock_state, mock_state_persister
+):
+  """Tests bisection with a mix of cached and non-cached results."""
+  commits = [_create_commit("c0", "m0"), _create_commit("c1", "m1")]
+  mock_gh_client.compare_commits.return_value = commits
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    use_cache=True,
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  # Scenario:
+  # c0 is checked first (mid). Cache miss. Run test -> Success.
+  # c1 is checked next (bad_idx was 2, good_idx became 0, mid is 1). Cache hit -> Failure.
+  # Result: c1 is culprit.
+
+  def get_latest_run_side_effect(**kwargs):
+    if kwargs.get("status") == "completed" and kwargs.get("commit") == "c1":
+      return {"conclusion": "failure"}
+    return None
+
+  mock_gh_client.get_latest_run.side_effect = get_latest_run_side_effect
+
+  # Mock _test_commit only for c0 (success)
+  mock_test_commit = mocker.patch.object(finder, "_test_commit")
+  mock_test_commit.side_effect = lambda sha, branch: True if sha == "c0" else False
+
+  # Mock branch existence for c0 test
+  mock_gh_client.check_branch_exists.side_effect = [False, True]
+
+  culprit = finder.run_bisection()
+
+  assert culprit == commits[1]
+
+  # verify _test_commit called for c0 but not c1
+  assert mock_test_commit.call_count == 1
+  assert mock_test_commit.call_args[0][0] == "c0"
+
+
+def test_check_existing_run_found_success(finder, mock_gh_client):
+  """Tests _check_existing_run when a successful run exists."""
+  mock_gh_client.get_latest_run.return_value = {"conclusion": "success"}
+
+  result = finder._check_existing_run("sha1")
+
+  assert result is True
+  mock_gh_client.get_latest_run.assert_called_once_with(
+    workflow_id=finder._workflow_file, commit="sha1", status="completed"
+  )
+
+
+def test_check_existing_run_found_failure(finder, mock_gh_client):
+  """Tests _check_existing_run when a failed run exists."""
+  mock_gh_client.get_latest_run.return_value = {"conclusion": "failure"}
+
+  result = finder._check_existing_run("sha1")
+
+  assert result is False
+
+
+def test_check_existing_run_not_found(finder, mock_gh_client):
+  """Tests _check_existing_run when no run exists."""
+  mock_gh_client.get_latest_run.return_value = None
+
+  result = finder._check_existing_run("sha1")
+
+  assert result is None
+
+
+def test_execute_test_with_branch_success(mocker, finder, mock_gh_client):
+  """Tests _execute_test_with_branch with successful execution."""
+  commit_sha = "sha1"
+
+  # Mock branch check: doesn't exist initially, exists for deletion
+  mock_gh_client.check_branch_exists.side_effect = [False, True]
+
+  mock_test = mocker.patch.object(finder, "_test_commit", return_value=True)
+
+  result = finder._execute_test_with_branch(commit_sha)
+
+  assert result is True
+  mock_gh_client.create_branch.assert_called_once()
+  args, _ = mock_gh_client.create_branch.call_args
+  assert args[1] == commit_sha
+  assert "culprit-finder/test-sha1_" in args[0]
+
+  mock_gh_client.wait_for_branch_creation.assert_called_once()
+  mock_test.assert_called_once()
+  mock_gh_client.delete_branch.assert_called_once()
+
+
+def test_execute_test_with_branch_exception_cleanup(mocker, finder, mock_gh_client):
+  """Tests cleanup in _execute_test_with_branch when an exception occurs."""
+  commit_sha = "sha1"
+
+  mock_gh_client.check_branch_exists.side_effect = [False, True]
+  mocker.patch.object(finder, "_test_commit", side_effect=Exception("Test error"))
+
+  with pytest.raises(Exception, match="Test error"):
+    finder._execute_test_with_branch(commit_sha)
+
+  mock_gh_client.create_branch.assert_called_once()
+  mock_gh_client.delete_branch.assert_called_once()
+
+
+def test_update_state_good(finder, mock_state_persister):
+  """Tests _update_state for a good commit."""
+  commit_sha = "sha1"
+  finder._update_state(commit_sha, is_good=True)
+
+  assert finder._state["current_good"] == commit_sha
+  assert finder._state["cache"][commit_sha] == "PASS"
+  mock_state_persister.save.assert_called_once_with(finder._state)
+
+
+def test_update_state_bad(finder, mock_state_persister):
+  """Tests _update_state for a bad commit."""
+  commit_sha = "sha1"
+  finder._update_state(commit_sha, is_good=False)
+
+  assert finder._state["current_bad"] == commit_sha
+  assert finder._state["cache"][commit_sha] == "FAIL"
+  mock_state_persister.save.assert_called_once_with(finder._state)

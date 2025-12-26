@@ -61,6 +61,7 @@ from a failed workflow run. If provided, the tool infers the repository, workflo
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
 (Optional if URL is provided).
 - `--clear-cache`: (Optional) Deletes the local state file before execution to start a fresh bisection.
+- `--no-cache`: (Optional) Disabled cached results. This will run the workflow on all commits.
 
 ### State Persistence and Resuming
 
