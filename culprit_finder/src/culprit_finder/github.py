@@ -230,7 +230,15 @@ class GithubClient:
     return json.loads(workflows)
 
   def get_run(self, run_id: str) -> Run:
-    """Get a run from its ID"""
+    """
+    Retrieves detailed information about a specific workflow run.
+
+    Args:
+        run_id: The unique database ID or number of the workflow run.
+
+    Returns:
+        A Run object containing metadata such as head SHA, status, and conclusion.
+    """
     cmd = [
       "run",
       "view",
@@ -244,7 +252,22 @@ class GithubClient:
     return json.loads(run)
 
   def get_run_from_url(self, url: str) -> Run:
-    """Get a run from a url with this structure: https://github.com/owner/repo/actions/runs/:runId/jobs/:jobId"""
+    """
+    Retrieves workflow run details using a GitHub Actions URL.
+
+    The URL must follow one of these structures:
+    - https://github.com/owner/repo/actions/runs/:runId
+    - https://github.com/owner/repo/actions/runs/:runId/jobs/:jobId
+
+    Args:
+        url: The full GitHub URL to the workflow run or specific job.
+
+    Returns:
+        A Run object containing metadata for the extracted run ID.
+
+    Raises:
+        ValueError: If the run ID cannot be parsed from the provided URL.
+    """
     match = re.search(r"actions/runs/(\d+)", url)
     if not match:
       raise ValueError(f"Could not extract run ID from URL: {url}")
