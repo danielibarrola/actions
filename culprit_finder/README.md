@@ -57,6 +57,7 @@ culprit-finder --repo <OWNER/REPO> --start <GOOD_SHA> --end <BAD_SHA> --workflow
 - `--start`: The full or short SHA of the last known **good** commit.
 - `--end`: The full or short SHA of the first known **bad** commit.
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
+- `--retry`: (Optional) Number of times to retry the workflow run if it fails (default: 0).
 
 ### Example
 

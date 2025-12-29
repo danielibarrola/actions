@@ -49,6 +49,13 @@ def main() -> None:
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
   )
+  parser.add_argument(
+    "--retry",
+    required=False,
+    help="Number of times to retry the workflow run if it fails (default: 0).",
+    default=0,
+    type=int,
+  )
 
   args = parser.parse_args()
 
@@ -65,6 +72,7 @@ def main() -> None:
   logging.info("Start commit: %s", args.start)
   logging.info("End commit: %s", args.end)
   logging.info("Workflow: %s", args.workflow)
+  logging.info("Retries: %s", args.retry)
 
   has_culprit_finder_workflow = any(
     wf["path"] == ".github/workflows/culprit_finder.yml"
@@ -80,6 +88,7 @@ def main() -> None:
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=gh_client,
+    retries=args.retry,
   )
   culprit_commit = finder.run_bisection()
   if culprit_commit:
