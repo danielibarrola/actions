@@ -216,6 +216,7 @@ def test_cli_success(
     workflow_file="test.yml",
     has_culprit_finder_workflow=has_culprit_workflow,
     github_client=mock_gh_client_instance,
+    retries=0,
     state=expected_state,
     state_persister=patches["state_persister_inst"],
   )
@@ -291,6 +292,7 @@ def test_cli_state_management(
       state=existing_state,
       github_client=mock_gh_client_instance,
       state_persister=patches["state_persister_inst"],
+      retries=0,
     )
   else:
     # If not exists or discarded, new state created
@@ -412,6 +414,7 @@ def test_cli_with_url(monkeypatch, mocker):
     github_client=mock_gh_client_instance,
     state=expected_state,
     state_persister=patches["state_persister_inst"],
+    retries=0,
   )
 
 

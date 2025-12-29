@@ -27,6 +27,7 @@ class CulpritFinder:
     github_client: github.GithubClient,
     state: culprit_finder_state.CulpritFinderState,
     state_persister: culprit_finder_state.StatePersister,
+    retries: int = 0,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -40,6 +41,7 @@ class CulpritFinder:
         github_client: The GithubClient instance used to interact with GitHub.
         state: The CulpritFinderState object containing the current bisection state.
         state_persister: The StatePersister object used to save the bisection state.
+        retries: Number of times to retry workflow runs in case of failure.
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -50,6 +52,7 @@ class CulpritFinder:
     self._gh_client = github_client
     self._state = state
     self._state_persister = state_persister
+    self._retries = retries
 
   def _wait_for_workflow_completion(
     self,
@@ -149,14 +152,28 @@ class CulpritFinder:
       inputs,
     )
 
-    run = self._wait_for_workflow_completion(
-      workflow_to_trigger,
-      branch_name,
-      commit_sha,
-      previous_run_id,
-    )
+    run: github.Run | None = None
+    for attempt in range(self._retries + 1):
+      run = self._wait_for_workflow_completion(
+        workflow_to_trigger,
+        branch_name,
+        commit_sha,
+        previous_run_id,
+      )
+
+      if run and run["conclusion"] == "success":
+        return True
+
+      if attempt < self._retries:
+        logging.info(
+          "Retrying workflow for commit %s (attempt %d/%d)",
+          commit_sha,
+          attempt + 1,
+          self._retries,
+        )
+
     if not run:
-      logging.error("Workflow failed to complete")
+      logging.error("Workflow failed to complete for commit %s", commit_sha)
       return False
 
     return run["conclusion"] == "success"

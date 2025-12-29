@@ -24,9 +24,8 @@ def mock_state_persister(mocker):
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister):
-  """Returns a CulpritFinder instance for testing."""
-  state: culprit_finder_state.CulpritFinderState = {
+def mock_state() -> culprit_finder_state.CulpritFinderState:
+  return {
     "repo": "test_repo",
     "workflow": "test_workflow",
     "original_start": "original_start_sha",
@@ -35,6 +34,11 @@ def finder(request, mock_gh_client, mock_state_persister):
     "current_bad": "",
     "cache": {},
   }
+
+
+@pytest.fixture
+def finder(request, mock_gh_client, mock_state_persister, mock_state):
+  """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
   return culprit_finder.CulpritFinder(
     repo=REPO,
@@ -43,7 +47,7 @@ def finder(request, mock_gh_client, mock_state_persister):
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=mock_gh_client,
-    state=state,
+    state=mock_state,
     state_persister=mock_state_persister,
   )
 
@@ -89,6 +93,40 @@ def test_wait_for_workflow_completion_success(mocker, finder, mock_gh_client):
 
   for call_args in mock_gh_client.get_latest_run.call_args_list:
     assert call_args[0][0] == workflow
+
+
+def test_test_commit_with_retries(
+  mocker, mock_gh_client, mock_state, mock_state_persister
+):
+  """Tests that _test_commit retries the specified number of times on failure."""
+  mocker.patch("culprit_finder.culprit_finder.github")
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    state=mock_state,
+    state_persister=mock_state_persister,
+    retries=2,
+  )
+
+  branch = "test-branch"
+  commit_sha = "sha1"
+
+  mock_wait = mocker.patch.object(finder, "_wait_for_workflow_completion")
+  mock_wait.side_effect = [
+    {"conclusion": "failure"},  # Initial attempt
+    {"conclusion": "failure"},  # First retry
+    {"conclusion": "success"},  # Second retry
+  ]
+
+  is_good = finder._test_commit(commit_sha, branch)
+
+  assert is_good is True
+  assert mock_wait.call_count == 3
 
 
 @pytest.mark.parametrize("finder", [True, False], indirect=True)
