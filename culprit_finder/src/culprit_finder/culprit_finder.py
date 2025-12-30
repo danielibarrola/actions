@@ -4,6 +4,7 @@ Core logic for detecting regression commits using binary search.
 This module defines the `CulpritFinder` class, which orchestrates the bisection process.
 """
 
+import json
 import time
 import logging
 import uuid
@@ -24,6 +25,7 @@ class CulpritFinder:
     workflow_file: str,
     has_culprit_finder_workflow: bool,
     github_client: github.GithubClient,
+    env_vars: dict[str, str] | None = None,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -34,6 +36,7 @@ class CulpritFinder:
         end_sha: The SHA of the first known bad commit.
         workflow_file: The name of the workflow file to test (e.g., 'build.yml').
         has_culprit_finder_workflow: Whether the repo being tested has a Culprit Finder workflow.
+        env_vars: Environment variables to set when running the workflow.
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -42,6 +45,7 @@ class CulpritFinder:
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
     self._gh_client = github_client
+    self._env_vars = env_vars
 
   def _wait_for_workflow_completion(
     self,
@@ -120,6 +124,9 @@ class CulpritFinder:
     else:
       workflow_to_trigger = self._workflow_file
       inputs = {}
+
+    if self._env_vars:
+      inputs["json_vars"] = json.dumps(self._env_vars)
 
     logging.info(
       "Triggering workflow %s on %s",

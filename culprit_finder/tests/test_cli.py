@@ -10,6 +10,7 @@ def _get_culprit_finder_command(
   start_sha: str | None,
   end_sha: str | None,
   workflow_file: str | None,
+  env_vars: list[str] | None = None,
 ) -> list[str]:
   command = ["culprit_finder"]
   if repo:
@@ -20,6 +21,8 @@ def _get_culprit_finder_command(
     command.extend(["--end", end_sha])
   if workflow_file:
     command.extend(["--workflow", workflow_file])
+  if env_vars:
+    command.extend(["--env", *env_vars])
   return command
 
 
@@ -195,8 +198,32 @@ def test_cli_success(
     workflow_file="test.yml",
     has_culprit_finder_workflow=has_culprit_workflow,
     github_client=mock_gh_client_instance,
+    env_vars=None,
   )
   mock_finder.return_value.run_bisection.assert_called_once()
 
   captured = capsys.readouterr()
   assert expected_output in captured.out
+
+
+def test_cli_with_env_vars(monkeypatch, mocker):
+  """Tests that environment variables are correctly parsed and passed to CulpritFinder."""
+  mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
+  _mock_gh_client(mocker, True, [])
+
+  env_args = ["KEY1=VALUE1", "KEY2=VALUE2"]
+  monkeypatch.setattr(
+    sys,
+    "argv",
+    _get_culprit_finder_command(
+      "owner/repo", "sha1", "sha2", "test.yml", env_vars=env_args
+    ),
+  )
+
+  cli.main()
+
+  mock_finder.assert_called_once()
+  assert mock_finder.call_args.kwargs["env_vars"] == {
+    "KEY1": "VALUE1",
+    "KEY2": "VALUE2",
+  }

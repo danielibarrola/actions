@@ -2,6 +2,7 @@
 
 from culprit_finder import culprit_finder, github
 import re
+import json
 import pytest
 from datetime import datetime, timezone
 
@@ -103,6 +104,40 @@ def test_test_commit_success(mocker, finder, mock_gh_client):
     branch,
     expected_inputs,
   )
+
+
+def test_test_commit_with_env_vars(mocker, mock_gh_client):
+  """Tests that _test_commit includes json_vars when env_vars are present."""
+  env_vars = {"foo": "bar", "baz": "qux"}
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    env_vars=env_vars,
+  )
+
+  mock_wait = mocker.patch.object(finder, "_wait_for_workflow_completion")
+  mock_wait.return_value = {"conclusion": "success"}
+
+  # Mock get_latest_run to return None for the "previous run" check
+  mock_gh_client.get_latest_run.return_value = None
+
+  finder._test_commit("sha1", "branch-name")
+
+  mock_gh_client.trigger_workflow.assert_called_once()
+  args, kwargs = mock_gh_client.trigger_workflow.call_args
+  workflow_file, branch, inputs = args
+
+  assert workflow_file == CULPRIT_WORKFLOW
+  assert branch == "branch-name"
+  assert inputs["workflow-to-debug"] == WORKFLOW_FILE
+
+  # Validate JSON content
+  actual_env_vars = json.loads(inputs["json_vars"])
+  assert actual_env_vars == env_vars
 
 
 def test_test_commit_failure(mocker, finder, mock_gh_client):

@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 import sys
+from typing import Sequence
 
 from culprit_finder import culprit_finder
 from culprit_finder import github
@@ -25,6 +26,28 @@ def _validate_repo(repo: str) -> str:
     raise argparse.ArgumentTypeError(f"Invalid repo format: {repo}")
 
   return repo
+
+
+def _parse_env_vars(env_vars: Sequence[str]) -> dict[str, str]:
+  """Parses a list of environment variables into a dictionary.
+
+  Args:
+      env_vars: A list of environment variables in KEY=VALUE format.
+
+  Returns:
+      A dictionary mapping variable names to their values.
+  """
+  parsed_env_vars = {}
+  for env_pair in env_vars:
+    if "=" in env_pair:
+      key, value = env_pair.split("=", 1)
+      parsed_env_vars[key] = value
+    else:
+      logging.warning(
+        "Invalid environment variable format: %s. Expected KEY=VALUE.",
+        env_pair,
+      )
+  return parsed_env_vars
 
 
 def main() -> None:
@@ -48,6 +71,12 @@ def main() -> None:
     "--workflow",
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
+  )
+  parser.add_argument(
+    "--env",
+    required=False,
+    nargs="+",
+    help="Environment variables to set for the workflow run (e.g., KEY1=VALUE1 KEY2=VALUE2)",
   )
 
   args = parser.parse_args()
@@ -73,6 +102,8 @@ def main() -> None:
 
   logging.info("Using culprit finder workflow: %s", has_culprit_finder_workflow)
 
+  env_vars = _parse_env_vars(args.env) if args.env else None
+
   finder = culprit_finder.CulpritFinder(
     repo=args.repo,
     start_sha=args.start,
@@ -80,6 +111,7 @@ def main() -> None:
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=gh_client,
+    env_vars=env_vars,
   )
   culprit_commit = finder.run_bisection()
   if culprit_commit:
