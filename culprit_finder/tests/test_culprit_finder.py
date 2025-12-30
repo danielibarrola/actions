@@ -3,6 +3,7 @@
 from culprit_finder import culprit_finder, github
 from culprit_finder import culprit_finder_state
 import re
+import json
 import pytest
 from datetime import datetime, timezone
 
@@ -24,9 +25,9 @@ def mock_state_persister(mocker):
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister):
-  """Returns a CulpritFinder instance for testing."""
-  state: culprit_finder_state.CulpritFinderState = {
+def mock_state() -> culprit_finder_state.CulpritFinderState:
+  """Returns a mock CulpritFinderState."""
+  return {
     "repo": "test_repo",
     "workflow": "test_workflow",
     "original_start": "original_start_sha",
@@ -35,6 +36,11 @@ def finder(request, mock_gh_client, mock_state_persister):
     "current_bad": "",
     "cache": {},
   }
+
+
+@pytest.fixture
+def finder(request, mock_gh_client, mock_state_persister, mock_state):
+  """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
   return culprit_finder.CulpritFinder(
     repo=REPO,
@@ -43,7 +49,7 @@ def finder(request, mock_gh_client, mock_state_persister):
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=mock_gh_client,
-    state=state,
+    state=mock_state,
     state_persister=mock_state_persister,
   )
 
@@ -121,6 +127,44 @@ def test_test_commit_success(mocker, finder, mock_gh_client):
     branch,
     expected_inputs,
   )
+
+
+def test_test_commit_with_env_vars(
+  mocker, mock_gh_client, mock_state, mock_state_persister
+):
+  """Tests that _test_commit includes json_vars when env_vars are present."""
+  env_vars = {"foo": "bar", "baz": "qux"}
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    env_vars=env_vars,
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  mock_wait = mocker.patch.object(finder, "_wait_for_workflow_completion")
+  mock_wait.return_value = {"conclusion": "success"}
+
+  # Mock get_latest_run to return None for the "previous run" check
+  mock_gh_client.get_latest_run.return_value = None
+
+  finder._test_commit("sha1", "branch-name")
+
+  mock_gh_client.trigger_workflow.assert_called_once()
+  args, kwargs = mock_gh_client.trigger_workflow.call_args
+  workflow_file, branch, inputs = args
+
+  assert workflow_file == CULPRIT_WORKFLOW
+  assert branch == "branch-name"
+  assert inputs["workflow-to-debug"] == WORKFLOW_FILE
+
+  # Validate JSON content
+  actual_env_vars = json.loads(inputs["json_vars"])
+  assert actual_env_vars == env_vars
 
 
 def test_test_commit_failure(mocker, finder, mock_gh_client):

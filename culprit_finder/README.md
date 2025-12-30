@@ -61,6 +61,8 @@ from a failed workflow run. If provided, the tool infers the repository, workflo
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
 (Optional if URL is provided).
 - `--clear-cache`: (Optional) Deletes the local state file before execution to start a fresh bisection.
+- `--env`: (Optional) Environment variables to set when running the workflow in key=value format.
+For example, `--env VAR1=val1 VAR2=val2`.
 
 ### State Persistence and Resuming
 
@@ -69,6 +71,7 @@ Culprit Finder automatically saves its progress after each commit is tested. If 
 1. **Automatic Save**: The state is stored locally in `~/.github_culprit_finder/`.
 2. **Resume**: When you restart the tool with the same `--repo` and `--workflow`, it will prompt you to resume from the saved state.
 3. **Caching**: Results for individual commits are cached. If the bisection hits a commit that was already tested in a previous session, it will use the cached "PASS" or "FAIL" result instead of triggering a new GitHub Action.
+
 
 
 ### Example
