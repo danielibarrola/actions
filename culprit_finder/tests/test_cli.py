@@ -10,6 +10,8 @@ def _get_culprit_finder_command(
   start_sha: str | None,
   end_sha: str | None,
   workflow_file: str | None,
+  cross_repo_dep: str | None = None,
+  dep_pin_file: str | None = None,
 ) -> list[str]:
   command = ["culprit_finder"]
   if repo:
@@ -20,6 +22,10 @@ def _get_culprit_finder_command(
     command.extend(["--end", end_sha])
   if workflow_file:
     command.extend(["--workflow", workflow_file])
+  if cross_repo_dep:
+    command.extend(["--cross-repo-dep", cross_repo_dep])
+  if dep_pin_file:
+    command.extend(["--dep-pin-file", dep_pin_file])
   return command
 
 
@@ -58,6 +64,29 @@ def _get_culprit_finder_command(
       "Invalid repo format: owner/",
     ),
     (_get_culprit_finder_command("", "sha1", "sha2", "test.yml"), "error"),
+    # Cross-repo arguments mismatch
+    (
+      _get_culprit_finder_command(
+        "owner/repo",
+        "sha1",
+        "sha2",
+        "test.yml",
+        cross_repo_dep="owner/dep",
+        dep_pin_file=None,
+      ),
+      "error",
+    ),
+    (
+      _get_culprit_finder_command(
+        "owner/repo",
+        "sha1",
+        "sha2",
+        "test.yml",
+        cross_repo_dep=None,
+        dep_pin_file="deps.bzl",
+      ),
+      "error",
+    ),
   ],
 )
 def test_cli_args_failures(monkeypatch, capsys, args, expected_error_msg):
@@ -113,6 +142,7 @@ def test_cli_not_authenticated(monkeypatch, mocker, caplog):
 def test_cli_auth_success(monkeypatch, mocker, cli_auth, token_auth):
   """Tests that the CLI proceeds if authenticated via CLI or GH_TOKEN."""
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
+  mock_finder.return_value.run_bisection.return_value = None, "owner/repo"
   _mock_gh_client(mocker, cli_auth, [{"path": "some/path", "name": "Culprit Finder"}])
 
   if token_auth:
@@ -132,7 +162,7 @@ def test_cli_auth_success(monkeypatch, mocker, cli_auth, token_auth):
 
 
 @pytest.mark.parametrize(
-  "workflows_list, has_culprit_workflow, found_culprit_commit, expected_output",
+  "workflows_list, has_culprit_workflow, found_culprit_commit, expected_output, extra_args",
   [
     # Scenario 1: Culprit finder workflow present, Culprit Found
     (
@@ -143,6 +173,7 @@ def test_cli_auth_success(monkeypatch, mocker, cli_auth, token_auth):
       True,
       {"sha": "badsha123", "message": "Bad commit message\nDetails"},
       "The culprit commit is: Bad commit message (SHA: badsha123)",
+      {},
     ),
     # Scenario 2: Culprit finder workflow absent, Culprit Found
     (
@@ -150,6 +181,7 @@ def test_cli_auth_success(monkeypatch, mocker, cli_auth, token_auth):
       False,
       {"sha": "badsha456", "message": "Another bad one"},
       "The culprit commit is: Another bad one (SHA: badsha456)",
+      {},
     ),
     # Scenario 3: Culprit finder workflow present, No Culprit Found
     (
@@ -159,6 +191,17 @@ def test_cli_auth_success(monkeypatch, mocker, cli_auth, token_auth):
       True,
       None,
       "No culprit commit found.",
+      {},
+    ),
+    # Scenario 4: Cross-repo culprit found
+    (
+      [
+        {"path": ".github/workflows/culprit_finder.yml", "name": "Culprit Finder"},
+      ],
+      True,
+      {"sha": "cr_sha", "message": "Cross repo bad commit"},
+      "Culprit commit found in cross-repo dependency: owner/dep",
+      {"cross_repo_dep": "owner/dep", "dep_pin_file": "deps.bzl"},
     ),
   ],
 )
@@ -170,6 +213,7 @@ def test_cli_success(
   has_culprit_workflow: bool,
   found_culprit_commit: github.Commit | None,
   expected_output: str,
+  extra_args: dict,
 ):
   """
   Tests the happy path.
@@ -178,12 +222,20 @@ def test_cli_success(
   """
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
   mock_gh_client_instance = _mock_gh_client(mocker, True, workflows_list)
-  mock_finder.return_value.run_bisection.return_value = found_culprit_commit
+
+  found_repo = "owner/repo"
+  if extra_args.get("cross_repo_dep") and found_culprit_commit:
+    found_repo = extra_args["cross_repo_dep"]
+
+  mock_finder.return_value.run_bisection.return_value = (
+    found_culprit_commit,
+    found_repo,
+  )
 
   monkeypatch.setattr(
     sys,
     "argv",
-    _get_culprit_finder_command("owner/repo", "sha1", "sha2", "test.yml"),
+    _get_culprit_finder_command("owner/repo", "sha1", "sha2", "test.yml", **extra_args),
   )
 
   cli.main()
@@ -195,6 +247,8 @@ def test_cli_success(
     workflow_file="test.yml",
     has_culprit_finder_workflow=has_culprit_workflow,
     github_client=mock_gh_client_instance,
+    cross_repo_dep=extra_args.get("cross_repo_dep"),
+    dep_pin_file=extra_args.get("dep_pin_file"),
   )
   mock_finder.return_value.run_bisection.assert_called_once()
 

@@ -49,8 +49,22 @@ def main() -> None:
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
   )
+  parser.add_argument(
+    "--cross-repo-dep",
+    required=False,
+    help="Cross-repository dependency (e.g., owner/repo2)",
+    type=_validate_repo,
+  )
+  parser.add_argument(
+    "--dep-pin-file",
+    required=False,
+    help="Path to the file in the primary repo that pins the dependency commit SHA (e.g., revision.bzl)",
+  )
 
   args = parser.parse_args()
+
+  if bool(args.cross_repo_dep) != bool(args.dep_pin_file):
+    parser.error("--cross-repo-dep and --dep-pin-file must be used together.")
 
   gh_client = github.GithubClient(repo=args.repo)
 
@@ -80,10 +94,14 @@ def main() -> None:
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=gh_client,
+    cross_repo_dep=args.cross_repo_dep,
+    dep_pin_file=args.dep_pin_file,
   )
-  culprit_commit = finder.run_bisection()
+  culprit_commit, repo = finder.run_bisection()
   if culprit_commit:
     commit_message = culprit_commit["message"].splitlines()[0]
+    if repo != args.repo:
+      print(f"\nCulprit commit found in cross-repo dependency: {repo}")
     print(
       f"\nThe culprit commit is: {commit_message} (SHA: {culprit_commit['sha']})",
     )

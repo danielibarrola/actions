@@ -57,6 +57,11 @@ culprit-finder --repo <OWNER/REPO> --start <GOOD_SHA> --end <BAD_SHA> --workflow
 - `--start`: The full or short SHA of the last known **good** commit.
 - `--end`: The full or short SHA of the first known **bad** commit.
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
+- `--cross-repo-dep`: (Optional) A cross-repository dependency in the format `owner/repo`.
+This allows finding a culprit commit in a dependency if the issue isn't found in the main repository.
+Must be used with `--dep-pin-file`.
+- `--dep-pin-file`: (Optional) Path to the file in the primary repository that pins the dependency commit SHA 
+(e.g., `revision.bzl`). Must be used with `--cross-repo-dep`.
 
 ### Example
 
@@ -68,6 +73,19 @@ culprit-finder
 --workflow build_and_test.yml
 ```
 
+**Cross-Repository Search:**
+
+If the regression might be in a dependency (e.g., `google/dep-repo`) pinned in a file (e.g., `deps.bzl`), use:
+
+```shell
+culprit-finder
+--repo google-ml-infra/main-repo
+--start <GOOD_SHA>
+--end <BAD_SHA>
+--workflow ci.yml
+--cross-repo-dep google/dep-repo
+--dep-pin-file deps.bzl
+```
 
 ## Developer Notes
 

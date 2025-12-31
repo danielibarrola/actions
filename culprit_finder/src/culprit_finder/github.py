@@ -2,6 +2,7 @@
 Module for interacting with the GitHub API via the gh CLI.
 """
 
+import base64
 import subprocess
 import json
 import logging
@@ -223,3 +224,20 @@ class GithubClient:
     cmd = ["workflow", "list", "--json", "path,name", "--repo", self.repo]
     workflows = self._run_command(cmd)
     return json.loads(workflows)
+
+  def get_file_content(self, file_path: str, ref: str) -> str:
+    """
+    Retrieves the content of a file at a specific commit or branch.
+
+    Args:
+        file_path: The path to the file in the repository.
+        ref: The commit SHA, tag, or branch name.
+
+    Returns:
+        The content of the file as a string.
+    """
+    endpoint = f"repos/{self.repo}/contents/{file_path}?ref={ref}"
+    output = self._run_command(["api", endpoint])
+    data = json.loads(output)
+    content_base64 = data["content"]
+    return base64.b64decode(content_base64).decode("utf-8")
