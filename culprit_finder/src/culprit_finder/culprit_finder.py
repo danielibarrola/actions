@@ -27,6 +27,7 @@ class CulpritFinder:
     github_client: github.GithubClient,
     state: culprit_finder_state.CulpritFinderState,
     state_persister: culprit_finder_state.StatePersister,
+    dry_run: bool = False,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -40,6 +41,7 @@ class CulpritFinder:
         github_client: The GithubClient instance used to interact with GitHub.
         state: The CulpritFinderState object containing the current bisection state.
         state_persister: The StatePersister object used to save the bisection state.
+        dry_run: Whether to run in dry-run mode (no API calls).
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -50,6 +52,7 @@ class CulpritFinder:
     self._gh_client = github_client
     self._state = state
     self._state_persister = state_persister
+    self._dry_run = dry_run
 
   def _wait_for_workflow_completion(
     self,
@@ -137,6 +140,15 @@ class CulpritFinder:
       branch_name,
     )
 
+    if self._dry_run:
+      logging.info(
+        "DRY RUN: Would trigger workflow %s on %s with inputs %s",
+        workflow_to_trigger,
+        branch_name,
+        inputs,
+      )
+      return True
+
     # Get the ID of the previous run (if any) to distinguish it from the new one we are about to trigger
     previous_run = self._gh_client.get_latest_run(
       workflow_to_trigger, branch_name, event="workflow_dispatch"
@@ -206,29 +218,36 @@ class CulpritFinder:
 
       # Ensure the branch does not exist from a previous run
       if not self._gh_client.check_branch_exists(branch_name):
-        self._gh_client.create_branch(branch_name, commit_sha)
-        logging.info("Created branch %s", branch_name)
-        self._gh_client.wait_for_branch_creation(branch_name, timeout=180)
+        if self._dry_run:
+          logging.info("DRY RUN: Would create branch %s", branch_name)
+        else:
+          self._gh_client.create_branch(branch_name, commit_sha)
+          logging.info("Created branch %s", branch_name)
+          self._gh_client.wait_for_branch_creation(branch_name, timeout=180)
 
       try:
         is_good = self._test_commit(commit_sha, branch_name)
       finally:
-        if self._gh_client.check_branch_exists(branch_name):
+        if self._dry_run:
+          logging.info("DRY RUN: Would delete branch %s", branch_name)
+        elif self._gh_client.check_branch_exists(branch_name):
           logging.info("Deleting branch %s", branch_name)
           self._gh_client.delete_branch(branch_name)
 
       if is_good:
         good_idx = mid_idx
-        self._state["current_good"] = commit_sha
-        self._state["cache"][commit_sha] = "PASS"
-        logging.info("Commit %s is good", commit_sha)
+        if not self._dry_run:
+          self._state["current_good"] = commit_sha
+          self._state["cache"][commit_sha] = "PASS"
       else:
         bad_idx = mid_idx
-        self._state["current_bad"] = commit_sha
-        self._state["cache"][commit_sha] = "FAIL"
-        logging.info("Commit %s is bad", commit_sha)
+        if not self._dry_run:
+          self._state["current_bad"] = commit_sha
+          self._state["cache"][commit_sha] = "FAIL"
 
-      self._state_persister.save(self._state)
+      if not self._dry_run:
+        logging.info("Commit %s is %s", commit_sha, "good" if is_good else "bad")
+        self._state_persister.save(self._state)
 
     if bad_idx == len(commits):
       return None

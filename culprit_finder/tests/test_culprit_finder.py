@@ -1,7 +1,6 @@
 """Tests for the CulpritFinder class."""
 
-from culprit_finder import culprit_finder, github
-from culprit_finder import culprit_finder_state
+from culprit_finder import culprit_finder, culprit_finder_state, github
 import re
 import pytest
 from datetime import datetime, timezone
@@ -24,9 +23,8 @@ def mock_state_persister(mocker):
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister):
-  """Returns a CulpritFinder instance for testing."""
-  state: culprit_finder_state.CulpritFinderState = {
+def mock_state() -> culprit_finder_state.CulpritFinderState:
+  return {
     "repo": "test_repo",
     "workflow": "test_workflow",
     "original_start": "original_start_sha",
@@ -35,6 +33,11 @@ def finder(request, mock_gh_client, mock_state_persister):
     "current_bad": "",
     "cache": {},
   }
+
+
+@pytest.fixture
+def finder(request, mock_gh_client, mock_state_persister, mock_state):
+  """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
   return culprit_finder.CulpritFinder(
     repo=REPO,
@@ -43,7 +46,7 @@ def finder(request, mock_gh_client, mock_state_persister):
     workflow_file=WORKFLOW_FILE,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=mock_gh_client,
-    state=state,
+    state=mock_state,
     state_persister=mock_state_persister,
   )
 
@@ -205,6 +208,7 @@ def test_run_bisection(
 ):
   """Tests various bisection scenarios including finding a culprit, no culprit, etc."""
   mock_gh_client.compare_commits.return_value = commits
+
   # Mock check_branch_exists to alternate False/True to simulate creation/deletion needs
   # We need enough values for the max possible iterations (2 * len(commits))
   mock_gh_client.check_branch_exists.side_effect = [False, True] * (len(commits) + 1)
@@ -346,3 +350,67 @@ def test_run_bisection_skips_testing_cached_commit(mocker, finder, mock_gh_clien
   finder._state_persister.save.assert_called_once()
   saved_state = finder._state_persister.save.call_args[0][0]
   assert saved_state["cache"]["c2"] == "FAIL"
+
+
+def test_run_bisection_dry_run(mock_gh_client, mock_state, mock_state_persister):
+  """Tests that run_bisection in dry_run mode does not make state-changing API calls."""
+  commits = [
+    {"sha": "c0", "message": "m0"},
+    {"sha": "c1", "message": "m1"},
+    {"sha": "c2", "message": "m2"},
+  ]
+  mock_gh_client.compare_commits.return_value = commits
+
+  # Simulate branch not existing initially
+  mock_gh_client.check_branch_exists.return_value = False
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    dry_run=True,
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  # In dry run, _test_commit returns True, so no culprit should be found (all good)
+  result = finder.run_bisection()
+
+  assert result is None
+
+  # Verify API calls that change state were NOT made
+  mock_gh_client.create_branch.assert_not_called()
+  mock_gh_client.delete_branch.assert_not_called()
+  mock_gh_client.trigger_workflow.assert_not_called()
+
+  # Verify read-only calls were made
+  mock_gh_client.compare_commits.assert_called_once()
+  # check_branch_exists is called multiple times (before create, after test)
+  assert mock_gh_client.check_branch_exists.call_count > 0
+
+
+def test_test_commit_dry_run(mock_gh_client, mock_state, mock_state_persister):
+  """Tests that _test_commit returns True and makes no API calls in dry run mode."""
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    dry_run=True,
+    state=mock_state,
+    state_persister=mock_state_persister,
+  )
+
+  branch = "test-branch"
+  commit_sha = "sha1"
+
+  result = finder._test_commit(commit_sha, branch)
+
+  assert result is True
+  mock_gh_client.trigger_workflow.assert_not_called()
+  mock_gh_client.get_latest_run.assert_not_called()
