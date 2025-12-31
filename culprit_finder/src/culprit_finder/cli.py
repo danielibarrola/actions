@@ -49,6 +49,11 @@ def main() -> None:
     required=True,
     help="Workflow filename (e.g., build_and_test.yml)",
   )
+  parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="Simulates the bisection process by printing the API calls that would be made without actually executing them",
+  )
 
   args = parser.parse_args()
 
@@ -80,8 +85,12 @@ def main() -> None:
     workflow_file=args.workflow,
     has_culprit_finder_workflow=has_culprit_finder_workflow,
     github_client=gh_client,
+    dry_run=args.dry_run,
   )
   culprit_commit = finder.run_bisection()
+  if args.dry_run:
+    return
+
   if culprit_commit:
     commit_message = culprit_commit["message"].splitlines()[0]
     print(

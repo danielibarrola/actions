@@ -254,3 +254,63 @@ def test_run_bisection_branch_already_exists(mocker, finder, mock_gh_client):
     r"culprit-finder/test-c0_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     called_branch_name_delete,
   )
+
+
+def test_run_bisection_dry_run(mocker, mock_gh_client):
+  """Tests that run_bisection in dry_run mode does not make state-changing API calls."""
+  commits = [
+    {"sha": "c0", "message": "m0"},
+    {"sha": "c1", "message": "m1"},
+    {"sha": "c2", "message": "m2"},
+  ]
+  mock_gh_client.compare_commits.return_value = commits
+
+  # Simulate branch not existing initially
+  mock_gh_client.check_branch_exists.return_value = False
+
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    dry_run=True,
+  )
+
+  # In dry run, _test_commit returns True, so no culprit should be found (all good)
+  result = finder.run_bisection()
+
+  assert result is None
+
+  # Verify API calls that change state were NOT made
+  mock_gh_client.create_branch.assert_not_called()
+  mock_gh_client.delete_branch.assert_not_called()
+  mock_gh_client.trigger_workflow.assert_not_called()
+
+  # Verify read-only calls were made
+  mock_gh_client.compare_commits.assert_called_once()
+  # check_branch_exists is called multiple times (before create, after test)
+  assert mock_gh_client.check_branch_exists.call_count > 0
+
+
+def test_test_commit_dry_run(mocker, mock_gh_client):
+  """Tests that _test_commit returns True and makes no API calls in dry run mode."""
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha="start_sha",
+    end_sha="end_sha",
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    dry_run=True,
+  )
+
+  branch = "test-branch"
+  commit_sha = "sha1"
+
+  result = finder._test_commit(commit_sha, branch)
+
+  assert result is True
+  mock_gh_client.trigger_workflow.assert_not_called()
+  mock_gh_client.get_latest_run.assert_not_called()

@@ -57,6 +57,8 @@ culprit-finder --repo <OWNER/REPO> --start <GOOD_SHA> --end <BAD_SHA> --workflow
 - `--start`: The full or short SHA of the last known **good** commit.
 - `--end`: The full or short SHA of the first known **bad** commit.
 - `--workflow`: The filename of the GitHub Actions workflow to run (e.g., `ci.yml`, `tests.yaml`).
+- `--dry-run`: (Optional) Simulates the bisection process by printing the API calls
+that would be made without actually executing them.
 
 ### Example
 

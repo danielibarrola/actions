@@ -24,6 +24,7 @@ class CulpritFinder:
     workflow_file: str,
     has_culprit_finder_workflow: bool,
     github_client: github.GithubClient,
+    dry_run: bool = False,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -34,6 +35,7 @@ class CulpritFinder:
         end_sha: The SHA of the first known bad commit.
         workflow_file: The name of the workflow file to test (e.g., 'build.yml').
         has_culprit_finder_workflow: Whether the repo being tested has a Culprit Finder workflow.
+        dry_run: Whether to run in dry-run mode (no API calls).
     """
     self._repo = repo
     self._start_sha = start_sha
@@ -42,6 +44,7 @@ class CulpritFinder:
     self._workflow_file = workflow_file
     self._has_culprit_finder_workflow = has_culprit_finder_workflow
     self._gh_client = github_client
+    self._dry_run = dry_run
 
   def _wait_for_workflow_completion(
     self,
@@ -127,6 +130,15 @@ class CulpritFinder:
       branch_name,
     )
 
+    if self._dry_run:
+      logging.info(
+        "DRY RUN: Would trigger workflow %s on %s with inputs %s",
+        workflow_to_trigger,
+        branch_name,
+        inputs,
+      )
+      return True
+
     # Get the ID of the previous run (if any) to distinguish it from the new one we are about to trigger
     previous_run = self._gh_client.get_latest_run(workflow_to_trigger, branch_name)
     previous_run_id = previous_run["databaseId"] if previous_run else None
@@ -181,22 +193,28 @@ class CulpritFinder:
 
       # Ensure the branch does not exist from a previous run
       if not self._gh_client.check_branch_exists(branch_name):
-        self._gh_client.create_branch(branch_name, commit_sha)
-        logging.info("Created branch %s", branch_name)
+        if self._dry_run:
+          logging.info("DRY RUN: Would create branch %s", branch_name)
+        else:
+          self._gh_client.create_branch(branch_name, commit_sha)
+          logging.info("Created branch %s", branch_name)
 
       try:
         is_good = self._test_commit(commit_sha, branch_name)
       finally:
-        if self._gh_client.check_branch_exists(branch_name):
+        if self._dry_run:
+          logging.info("DRY RUN: Would delete branch %s", branch_name)
+        elif self._gh_client.check_branch_exists(branch_name):
           logging.info("Deleting branch %s", branch_name)
           self._gh_client.delete_branch(branch_name)
 
       if is_good:
         good_idx = mid_idx
-        logging.info("Commit %s is good", commit_sha)
       else:
         bad_idx = mid_idx
-        logging.info("Commit %s is bad", commit_sha)
+
+      if not self._dry_run:
+        logging.info("Commit %s is %s", commit_sha, "good" if is_good else "bad")
 
     if bad_idx == len(commits):
       return None
