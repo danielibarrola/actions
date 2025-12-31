@@ -27,9 +27,10 @@ def mock_state_persister(mocker):
 
 @pytest.fixture
 def mock_state() -> culprit_finder_state.CulpritFinderState:
+  """Returns a mock CulpritFinderState."""
   return {
-    "repo": "test_repo",
-    "workflow": "test_workflow",
+    "repo": REPO,
+    "workflow": WORKFLOW_FILE,
     "original_start": "original_start_sha",
     "original_end": "original_end_sha",
     "current_good": "",
@@ -40,19 +41,31 @@ def mock_state() -> culprit_finder_state.CulpritFinderState:
 
 
 @pytest.fixture
-def finder(request, mock_gh_client, mock_state_persister, mock_state):
+def finder_factory(mock_gh_client, mock_state_persister, mock_state):
+  """Returns a factory function to create CulpritFinder instances for testing."""
+
+  def _make_finder(**kwargs):
+    defaults = {
+      "repo": REPO,
+      "start_sha": "start_sha",
+      "end_sha": "end_sha",
+      "workflow_file": WORKFLOW_FILE,
+      "has_culprit_finder_workflow": True,
+      "gh_client": mock_gh_client,
+      "state": mock_state,
+      "state_persister": mock_state_persister,
+    }
+    defaults.update(kwargs)
+    return culprit_finder.CulpritFinder(**defaults)
+
+  return _make_finder
+
+
+@pytest.fixture
+def finder(request, finder_factory):
   """Returns a CulpritFinder instance for testing."""
   has_culprit_finder_workflow = getattr(request, "param", True)
-  return culprit_finder.CulpritFinder(
-    repo=REPO,
-    start_sha="start_sha",
-    end_sha="end_sha",
-    workflow_file=WORKFLOW_FILE,
-    has_culprit_finder_workflow=has_culprit_finder_workflow,
-    gh_client=mock_gh_client,
-    state=mock_state,
-    state_persister=mock_state_persister,
-  )
+  return finder_factory(has_culprit_finder_workflow=has_culprit_finder_workflow)
 
 
 @pytest.mark.parametrize("finder", [True, False], indirect=True)
@@ -301,8 +314,9 @@ def test_run_bisection(
   mock_test = mocker.patch.object(finder, "_test_commit")
   mock_test.side_effect = test_results
 
-  culprit_commit = finder.run_bisection()
+  culprit_commit, repo = finder.run_bisection()
 
+  assert repo == REPO
   if expected_culprit_idx is None:
     assert culprit_commit is None
   else:
@@ -384,8 +398,9 @@ def test_run_bisection_updates_and_saves_state_each_iteration(
   # Mid=1 => c1 is BAD, then mid=0 => c0 is GOOD
   mock_test.side_effect = [False, True]
 
-  culprit = finder.run_bisection()
+  culprit, repo = finder.run_bisection()
   assert culprit == commits[1]
+  assert repo == REPO
 
   assert finder._state_persister.save.call_count == 2
 
@@ -423,8 +438,9 @@ def test_run_bisection_skips_testing_cached_commit(mocker, finder, mock_gh_clien
   # Only one real iteration should create/cleanup a branch => two calls.
   mock_gh_client.check_branch_exists.side_effect = [False, True]
 
-  culprit = finder.run_bisection()
+  culprit, repo = finder.run_bisection()
   assert culprit == commits[2]
+  assert repo == REPO
 
   # Ensure c1 was not tested because it was cached.
   tested_shas = [call.args[0] for call in mock_test.call_args_list]
@@ -435,3 +451,82 @@ def test_run_bisection_skips_testing_cached_commit(mocker, finder, mock_gh_clien
   finder._state_persister.save.assert_called_once()
   saved_state = finder._state_persister.save.call_args[0][0]
   assert saved_state["cache"]["c2"] == "FAIL"
+
+
+def test_run_bisection_cross_repo(mocker, mock_gh_client, finder_factory):
+  """
+  Tests the cross-repo bisection logic when the culprit is in a dependency.
+  """
+  cross_repo_dep = "owner/other-repo"
+  dep_pin_file = "deps.bzl"
+  start_sha = "start"
+  end_sha = "end"
+
+  mock_cross_gh_client = mocker.create_autospec(
+    github_client.GithubClient, instance=True
+  )
+  mock_cross_gh_client.repo_name = cross_repo_dep
+
+  finder = finder_factory(
+    start_sha=start_sha,
+    end_sha=end_sha,
+    cross_repo_dep=cross_repo_dep,
+    dep_pin_file=dep_pin_file,
+    cross_repo_gh_client=mock_cross_gh_client,
+  )
+
+  main_commits = [
+    factories.create_commit(mocker, "c0", "m0"),
+    factories.create_commit(mocker, "c1", "m1"),
+  ]
+  cross_commits = [
+    factories.create_commit(mocker, "cr0", "xr0"),
+    factories.create_commit(mocker, "cr1", "xr1"),
+  ]
+
+  mock_gh_client.compare_commits.return_value = main_commits
+  mock_gh_client.get_file_content.side_effect = [
+    "COMMIT=cr_start",  # start_sha version
+    "COMMIT=cr_end",  # end_sha version
+  ]
+
+  mock_cross_gh_client.compare_commits.return_value = cross_commits
+  mocker.patch(
+    "culprit_finder.github_client.GithubClient", return_value=mock_cross_gh_client
+  )
+
+  mock_test = mocker.patch.object(finder, "_test_commit")
+  mock_test.side_effect = [True, True, True, False]
+
+  # Mock branch existence checks for both bisect runs
+  mock_gh_client.check_branch_exists.return_value = False
+
+  culprit_commit, repo = finder.run_bisection()
+
+  assert repo == cross_repo_dep
+  assert culprit_commit == cross_commits[1]  # cr1 is the culprit
+
+
+def test_get_cross_repo_commits_success(finder_factory):
+  """Tests extracting cross-repo commit SHAs."""
+  dep_pin_file = "deps.bzl"
+
+  finder = finder_factory(dep_pin_file=dep_pin_file)
+
+  finder._gh_client.get_file_content.side_effect = [
+    "COMMIT=sha123",
+    "COMMIT=sha456",
+  ]
+
+  start, end = finder._get_cross_repo_commits()
+
+  assert start == "sha123"
+  assert end == "sha456"
+
+
+def test_get_cross_repo_commits_no_file(finder_factory):
+  """Tests that ValueError is raised when dep_pin_file is missing."""
+  finder = finder_factory(dep_pin_file=None, cross_repo_dep="other/repo")
+
+  with pytest.raises(ValueError, match="Dependency pin file is not specified"):
+    finder._get_cross_repo_commits()

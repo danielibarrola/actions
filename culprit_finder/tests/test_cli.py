@@ -18,6 +18,8 @@ def _get_culprit_finder_command(
   end_sha: str | None,
   workflow_file: str | None,
   clear_cache: bool = False,
+  cross_repo_dep: str | None = None,
+  dep_pin_file: str | None = None,
 ) -> list[str]:
   command = ["culprit_finder"]
   if repo:
@@ -30,6 +32,10 @@ def _get_culprit_finder_command(
     command.extend(["--workflow", workflow_file])
   if clear_cache:
     command.append("--clear-cache")
+  if cross_repo_dep:
+    command.extend(["--cross-repo-dep", cross_repo_dep])
+  if dep_pin_file:
+    command.extend(["--dep-pin-file", dep_pin_file])
   return command
 
 
@@ -49,9 +55,32 @@ def _get_culprit_finder_command(
       "Invalid repo format: owner/",
     ),
     (_get_culprit_finder_command("", "sha1", "sha2", "test.yml"), "error"),
+    # Cross-repo arguments mismatch
+    (
+      _get_culprit_finder_command(
+        "owner/repo",
+        "sha1",
+        "sha2",
+        "test.yml",
+        cross_repo_dep="owner/dep",
+        dep_pin_file=None,
+      ),
+      "error",
+    ),
+    (
+      _get_culprit_finder_command(
+        "owner/repo",
+        "sha1",
+        "sha2",
+        "test.yml",
+        cross_repo_dep=None,
+        dep_pin_file="deps.bzl",
+      ),
+      "error",
+    ),
   ],
 )
-def test_invalid_repo_format(monkeypatch, capsys, args, expected_error_msg):
+def test_cli_args_failures(monkeypatch, capsys, args, expected_error_msg):
   """Tests that the CLI exits with an error for invalid inputs (missing args or invalid formats)."""
   monkeypatch.setattr(sys, "argv", args)
 
@@ -120,7 +149,7 @@ def test_cli_not_authenticated(monkeypatch, mocker, caplog):
 
 
 @pytest.mark.parametrize(
-  "workflows_list, has_culprit_workflow, found_culprit_commit, expected_output",
+  "workflows_list, has_culprit_workflow, found_culprit_commit, expected_output, extra_args",
   [
     # Scenario 1: Culprit finder workflow present, Culprit Found
     (
@@ -131,6 +160,7 @@ def test_cli_not_authenticated(monkeypatch, mocker, caplog):
       True,
       {"sha": "badsha123", "message": "Bad commit message\nDetails"},
       "The culprit commit is: Bad commit message (SHA: badsha123)",
+      {},
     ),
     # Scenario 2: Culprit finder workflow absent, Culprit Found
     (
@@ -138,6 +168,7 @@ def test_cli_not_authenticated(monkeypatch, mocker, caplog):
       False,
       {"sha": "badsha456", "message": "Another bad one"},
       "The culprit commit is: Another bad one (SHA: badsha456)",
+      {},
     ),
     # Scenario 3: Culprit finder workflow present, No Culprit Found
     (
@@ -147,6 +178,17 @@ def test_cli_not_authenticated(monkeypatch, mocker, caplog):
       True,
       None,
       "No culprit commit found.",
+      {},
+    ),
+    # Scenario 4: Cross-repo culprit found
+    (
+      [
+        {"path": ".github/workflows/culprit_finder.yml", "name": "Culprit Finder"},
+      ],
+      True,
+      {"sha": "cr_sha", "message": "Cross repo bad commit"},
+      "Culprit commit found in cross-repo dependency: owner/dep",
+      {"cross_repo_dep": "owner/dep", "dep_pin_file": "deps.bzl"},
     ),
   ],
 )
@@ -158,6 +200,7 @@ def test_cli_success(
   has_culprit_workflow: bool,
   found_culprit_commit: dict[str, str] | None,
   expected_output: str,
+  extra_args: dict,
 ):
   """
   Tests the happy path.
@@ -166,7 +209,7 @@ def test_cli_success(
   """
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
   mock_gh_client_instance = _mock_gh_client(mocker, True, workflows_list)
-  mock_finder.return_value.run_bisection.return_value = (
+  culprit_commit = (
     factories.create_commit(
       mocker, sha=found_culprit_commit["sha"], message=found_culprit_commit["message"]
     )
@@ -174,10 +217,19 @@ def test_cli_success(
     else None
   )
 
+  found_repo = "owner/repo"
+  if extra_args.get("cross_repo_dep") and found_culprit_commit:
+    found_repo = extra_args["cross_repo_dep"]
+
+  mock_finder.return_value.run_bisection.return_value = (
+    culprit_commit,
+    found_repo,
+  )
+
   monkeypatch.setattr(
     sys,
     "argv",
-    _get_culprit_finder_command("owner/repo", "sha1", "sha2", "test.yml"),
+    _get_culprit_finder_command("owner/repo", "sha1", "sha2", "test.yml", **extra_args),
   )
 
   patches = _mock_state(mocker)
@@ -195,6 +247,9 @@ def test_cli_success(
     "job": None,
   }
 
+  cross_repo_gh_client = (
+    mock_gh_client_instance if extra_args.get("cross_repo_dep") else None
+  )
   mock_finder.assert_called_once_with(
     repo="owner/repo",
     start_sha="sha1",
@@ -205,6 +260,8 @@ def test_cli_success(
     job=None,
     state=expected_state,
     state_persister=patches["state_persister_inst"],
+    cross_repo_gh_client=cross_repo_gh_client,
+    dep_pin_file=extra_args.get("dep_pin_file"),
   )
   mock_finder.return_value.run_bisection.assert_called_once()
 
@@ -236,9 +293,8 @@ def test_cli_state_management(
   """Tests state loading, user prompt, and cleanup."""
   mock_finder_cls = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
   mock_finder = mock_finder_cls.return_value
-  mock_finder.run_bisection.return_value = factories.create_commit(
-    mocker, sha="found_sha", message="msg"
-  )
+  culprit_commit = factories.create_commit(mocker, sha="found_sha", message="msg")
+  mock_finder.run_bisection.return_value = culprit_commit, "owner/repo"
 
   mock_gh_client_instance = _mock_gh_client(mocker, True)
   existing_state = (
@@ -281,6 +337,8 @@ def test_cli_state_management(
       gh_client=mock_gh_client_instance,
       state_persister=patches["state_persister_inst"],
       job=None,
+      cross_repo_gh_client=None,
+      dep_pin_file=None,
     )
   else:
     # If not exists or discarded, new state created
@@ -317,7 +375,7 @@ def test_cli_interrupted_saves_state(monkeypatch, mocker, caplog):
 def test_cli_clear_cache_deletes_state(monkeypatch, mocker):
   """Tests that the --clear-cache argument triggers state deletion."""
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
-  mock_finder.return_value.run_bisection.return_value = None
+  mock_finder.return_value.run_bisection.return_value = None, "owner/repo"
 
   _mock_gh_client(mocker, True)
 
@@ -345,6 +403,8 @@ def test_cli_clear_cache_deletes_state(monkeypatch, mocker):
 def test_cli_with_url(monkeypatch, mocker):
   """Tests that the CLI correctly infers arguments from a URL based on run status."""
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
+  mock_finder.return_value.run_bisection.return_value = None, "owner/repo"
+
   mock_gh_client_instance = _mock_gh_client(
     mocker,
     True,
@@ -390,6 +450,8 @@ def test_cli_with_url(monkeypatch, mocker):
     state=expected_state,
     state_persister=patches["state_persister_inst"],
     job=None,
+    cross_repo_gh_client=None,
+    dep_pin_file=None,
   )
 
 

@@ -2,6 +2,7 @@
 Module for interacting with the GitHub API via PyGithub.
 """
 
+import base64
 import logging
 import os
 import re
@@ -30,6 +31,10 @@ class GithubClient:
         token: The GitHub access token for authentication.
     """
     self._repo = github.Github(auth=github.Auth.Token(token)).get_repo(repo, lazy=True)
+
+  @property
+  def repo_name(self) -> str:
+    return self._repo.name
 
   def compare_commits(self, base_sha: str, head_sha: str) -> list[Commit]:
     """
@@ -336,13 +341,30 @@ class GithubClient:
     run = self.get_run(str(run_id))
     return list(run.jobs())
 
+  def get_file_content(self, file_path: str, ref: str) -> str:
+    """
+    Retrieves the content of a file at a specific commit or branch.
+
+    Args:
+        file_path: The path to the file in the repository.
+        ref: The commit SHA, tag, or branch name.
+
+    Returns:
+        The content of the file as a string.
+    """
+    try:
+      content = self._repo.get_contents(file_path, ref=ref)
+      return base64.b64decode(content.content).decode("utf-8")
+    except github.GithubException as e:
+      raise ValueError(f"Failed to retrieve file content: {e}")
+
 
 def get_github_token() -> str | None:
-  """Retrieves the GitHub access token from the environment or from the the GitHub CLI if not present.
+  """
+  Retrieves the GitHub access token from the environment or from the GitHub CLI.
 
   Returns:
-    The GitHub access token if present, otherwise None.
-
+      The GitHub access token if found, otherwise None.
   """
   token = os.environ.get("GH_TOKEN")
   if token:

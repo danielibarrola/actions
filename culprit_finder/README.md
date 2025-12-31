@@ -64,6 +64,11 @@ If provided, the tool infers the repository, workflow name, job name (if applica
 - `--job` (Optional): The specific job name within the workflow to monitor for pass/fail.
 If not provided, the tool checks the overall workflow conclusion.
 - `--clear-cache`: (Optional) Deletes the local state file before execution to start a fresh bisection.
+- `--cross-repo-dep`: (Optional) A cross-repository dependency in the format `owner/repo`.
+This allows finding a culprit commit in a dependency if the issue isn't found in the main repository.
+Must be used with `--dep-pin-file`.
+- `--dep-pin-file`: (Optional) Path to the file in the primary repository that pins the dependency commit SHA
+(e.g., `revision.bzl`). Must be used with `--cross-repo-dep`.
 
 ### State Persistence and Resuming
 
@@ -92,6 +97,19 @@ culprit-finder https://github.com/google-ml-infra/actions/actions/runs/123456789
 Using a Job URL to target a specific failure:
 ```shell
 culprit-finder https://github.com/google-ml-infra/actions/actions/runs/123456789/job/987654321
+```
+**Cross-Repository Search:**
+
+If the regression might be in a dependency (e.g., `google/dep-repo`) pinned in a file (e.g., `deps.bzl`), use:
+
+```shell
+culprit-finder
+--repo google-ml-infra/main-repo
+--start <GOOD_SHA>
+--end <BAD_SHA>
+--workflow ci.yml
+--cross-repo-dep google/dep-repo
+--dep-pin-file deps.bzl
 ```
 
 ## Developer Notes
