@@ -55,29 +55,6 @@ def _get_culprit_finder_command(
       "Invalid repo format: owner/",
     ),
     (_get_culprit_finder_command("", "sha1", "sha2", "test.yml"), "error"),
-    # Cross-repo arguments mismatch
-    (
-      _get_culprit_finder_command(
-        "owner/repo",
-        "sha1",
-        "sha2",
-        "test.yml",
-        cross_repo_dep="owner/dep",
-        dep_pin_file=None,
-      ),
-      "error",
-    ),
-    (
-      _get_culprit_finder_command(
-        "owner/repo",
-        "sha1",
-        "sha2",
-        "test.yml",
-        cross_repo_dep=None,
-        dep_pin_file="deps.bzl",
-      ),
-      "error",
-    ),
   ],
 )
 def test_cli_args_failures(monkeypatch, capsys, args, expected_error_msg):

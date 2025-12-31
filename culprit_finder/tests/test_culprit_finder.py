@@ -1,5 +1,6 @@
 """Tests for the CulpritFinder class."""
 
+from datetime import datetime
 import re
 
 import pytest
@@ -453,7 +454,9 @@ def test_run_bisection_skips_testing_cached_commit(mocker, finder, mock_gh_clien
   assert saved_state["cache"]["c2"] == "FAIL"
 
 
-def test_run_bisection_cross_repo(mocker, mock_gh_client, finder_factory):
+def test_run_bisection_cross_repo_with_pinned_dep(
+  mocker, mock_gh_client, finder_factory
+):
   """
   Tests the cross-repo bisection logic when the culprit is in a dependency.
   """
@@ -507,7 +510,7 @@ def test_run_bisection_cross_repo(mocker, mock_gh_client, finder_factory):
   assert culprit_commit == cross_commits[1]  # cr1 is the culprit
 
 
-def test_get_cross_repo_commits_success(finder_factory):
+def test_get_cross_repo_commits_from_dep_pin_file(finder_factory):
   """Tests extracting cross-repo commit SHAs."""
   dep_pin_file = "deps.bzl"
 
@@ -518,15 +521,121 @@ def test_get_cross_repo_commits_success(finder_factory):
     "COMMIT=sha456",
   ]
 
-  start, end = finder._get_cross_repo_commits()
+  start, end = finder._get_cross_repo_commits_from_dep_pin_file(dep_pin_file)
 
   assert start == "sha123"
   assert end == "sha456"
 
 
-def test_get_cross_repo_commits_no_file(finder_factory):
-  """Tests that ValueError is raised when dep_pin_file is missing."""
-  finder = finder_factory(dep_pin_file=None, cross_repo_dep="other/repo")
+@pytest.mark.parametrize(
+  "main_commits_data, cross_commits_data, test_results, expected_culprit_sha, expected_repo",
+  [
+    # Case 1: Culprit in main repo
+    (
+      [("m0", datetime(2023, 1, 1)), ("m1", datetime(2023, 1, 3))],
+      [("x0", datetime(2023, 1, 2)), ("x1", datetime(2023, 1, 4))],
+      [True, False],
+      "m1",
+      REPO,
+    ),
+    # Case 2: Culprit in cross repo
+    (
+      [("m0", datetime(2023, 1, 1))],
+      [("x0", datetime(2023, 1, 2))],
+      [True, False],
+      "x0",
+      "owner/other-repo",
+    ),
+  ],
+)
+def test_run_bisection_cross_repo_with_floating_deps_parameterized(
+  mocker,
+  mock_gh_client,
+  finder_factory,
+  main_commits_data,
+  cross_commits_data,
+  test_results,
+  expected_culprit_sha,
+  expected_repo,
+):
+  """
+  Tests the cross-repo bisection logic when dependencies are floating (no dep pin file).
+  """
+  cross_repo_dep = "owner/other-repo"
+  start_sha = "main_start"
+  end_sha = "main_end"
 
-  with pytest.raises(ValueError, match="Dependency pin file is not specified"):
-    finder._get_cross_repo_commits()
+  mock_cross_gh_client = mocker.create_autospec(
+    github_client.GithubClient, instance=True
+  )
+  mock_cross_gh_client.repo_name = cross_repo_dep
+
+  finder = finder_factory(
+    start_sha=start_sha,
+    end_sha=end_sha,
+    dep_pin_file=None,
+    cross_repo_gh_client=mock_cross_gh_client,
+  )
+
+  main_commits = [
+    factories.create_commit(mocker, sha, f"msg_{sha}", dt)
+    for sha, dt in main_commits_data
+  ]
+  cross_commits = [
+    factories.create_commit(mocker, sha, f"msg_{sha}", dt)
+    for sha, dt in cross_commits_data
+  ]
+
+  mock_gh_client.compare_commits.return_value = main_commits
+  mock_cross_gh_client.compare_commits.return_value = cross_commits
+
+  main_start_commit = factories.create_commit(
+    mocker, "m_start", "msg_m_start", datetime(2023, 1, 1)
+  )
+  main_end_commit = factories.create_commit(
+    mocker, "m_end", "msg_m_end", datetime(2023, 1, 5)
+  )
+  mock_gh_client.get_commit.side_effect = [main_start_commit, main_end_commit]
+
+  x_start_commit = factories.create_commit(
+    mocker, "x_start", "msg_x_start", datetime(2022, 12, 12)
+  )
+  x_end_commit = factories.create_commit(
+    mocker, "x_end", "msg_x_end", datetime(2023, 1, 4)
+  )
+  mock_cross_gh_client.get_commit_at_date.side_effect = [x_start_commit, x_end_commit]
+
+  mock_test = mocker.patch.object(finder, "_test_commit")
+  mock_test.side_effect = test_results
+
+  mock_gh_client.check_branch_exists.return_value = False
+
+  culprit_commit, repo = finder.run_bisection()
+
+  assert culprit_commit.sha == expected_culprit_sha
+  assert repo == expected_repo
+
+
+def test_run_bisection_cross_repo_with_floating_deps_no_commits(
+  mocker, mock_gh_client, finder_factory
+):
+  """
+  Tests the cross-repo bisection logic when no commits are found in either repo.
+  """
+  cross_repo_dep = "owner/other-repo"
+  mock_cross_gh_client = mocker.create_autospec(
+    github_client.GithubClient, instance=True
+  )
+  mock_cross_gh_client.repo_name = cross_repo_dep
+
+  finder = finder_factory(
+    dep_pin_file=None,
+    cross_repo_gh_client=mock_cross_gh_client,
+  )
+
+  mock_gh_client.compare_commits.return_value = []
+
+  culprit_commit, repo = finder.run_bisection()
+
+  assert culprit_commit is None
+  assert repo == REPO

@@ -66,7 +66,6 @@ If not provided, the tool checks the overall workflow conclusion.
 - `--clear-cache`: (Optional) Deletes the local state file before execution to start a fresh bisection.
 - `--cross-repo-dep`: (Optional) A cross-repository dependency in the format `owner/repo`.
 This allows finding a culprit commit in a dependency if the issue isn't found in the main repository.
-Must be used with `--dep-pin-file`.
 - `--dep-pin-file`: (Optional) Path to the file in the primary repository that pins the dependency commit SHA
 (e.g., `revision.bzl`). Must be used with `--cross-repo-dep`.
 

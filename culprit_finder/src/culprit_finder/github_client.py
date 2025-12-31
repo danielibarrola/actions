@@ -3,6 +3,7 @@ Module for interacting with the GitHub API via PyGithub.
 """
 
 import base64
+import datetime
 import logging
 import os
 import re
@@ -357,6 +358,33 @@ class GithubClient:
       return base64.b64decode(content.content).decode("utf-8")
     except github.GithubException as e:
       raise ValueError(f"Failed to retrieve file content: {e}")
+
+  def get_commit(self, sha: str) -> Commit:
+    """
+    Retrieves detailed information about a specific commit.
+
+    Args:
+        sha: The SHA of the commit.
+
+    Returns:
+        A dictionary containing commit details.
+    """
+    return self._repo.get_commit(sha)
+
+  def get_commit_at_date(self, date: datetime.datetime) -> Commit:
+    """
+    Finds the most recent commit at or before the specified date.
+
+    Args:
+        date: the date to search for.
+
+    Returns:
+        The SHA of the commit.
+    """
+    commits = self._repo.get_commits(until=date)
+    if commits.totalCount == 0:
+      raise ValueError(f"No commits found before {date}")
+    return commits[0]
 
 
 def get_github_token() -> str | None:

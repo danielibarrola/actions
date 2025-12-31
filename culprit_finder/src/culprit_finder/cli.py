@@ -113,9 +113,6 @@ def _parse_args(
 
   parsed_args = parser.parse_args(args)
 
-  if bool(parsed_args.cross_repo_dep) != bool(parsed_args.dep_pin_file):
-    parser.error("--cross-repo-dep and --dep-pin-file must be used together.")
-
   return parsed_args
 
 

@@ -47,7 +47,9 @@ def create_run(
   return run
 
 
-def create_commit(mocker, sha: str, message: str) -> Commit:
+def create_commit(
+  mocker, sha: str, message: str, date: Optional[datetime] = None
+) -> Commit:
   """Create a mock Commit object.
 
   Args:
@@ -62,6 +64,7 @@ def create_commit(mocker, sha: str, message: str) -> Commit:
   commit.sha = sha
   commit.commit = mocker.Mock()
   commit.commit.message = message
+  commit.commit.committer.date = date or datetime.now(timezone.utc)
   return commit
 
 
