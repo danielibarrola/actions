@@ -409,9 +409,9 @@ class CulpritFinder:
     commit_with_source, repo = self._bisect_unified(
       merged_commits, self._start_sha, cross_repo_start
     )
-    commit: github.Commit = {
-      "sha": commit["sha"],
-      "message": commit["message"],
-      "date": commit["date"],
+    culprit_commit: github.Commit = {
+      "sha": commit_with_source["sha"],
+      "message": commit_with_source["message"],
+      "date": commit_with_source["date"],
     }
-    return commit, repo
+    return culprit_commit, repo
