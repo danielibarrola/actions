@@ -63,9 +63,6 @@ def main() -> None:
 
   args = parser.parse_args()
 
-  if bool(args.cross_repo_dep) != bool(args.dep_pin_file):
-    parser.error("--cross-repo-dep and --dep-pin-file must be used together.")
-
   gh_client = github.GithubClient(repo=args.repo)
 
   is_authenticated_with_cli = gh_client.check_auth_status()
@@ -96,6 +93,9 @@ def main() -> None:
     github_client=gh_client,
     cross_repo_dep=args.cross_repo_dep,
     dep_pin_file=args.dep_pin_file,
+    cross_repo_gh_client=github.GithubClient(repo=args.cross_repo_dep)
+    if args.cross_repo_dep
+    else None,
   )
   culprit_commit, repo = finder.run_bisection()
   if culprit_commit:

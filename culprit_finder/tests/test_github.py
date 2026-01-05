@@ -13,11 +13,20 @@ def test_compare_commits_multiple_pages(mocker):
   head_sha = "head"
 
   page1_commits = [
-    {"sha": f"sha{i}", "commit": {"message": f"msg{i}"}} for i in range(3)
+    {
+      "sha": f"sha{i}",
+      "commit": {"message": f"msg{i}", "committer": {"date": "2026-01-01T00:00:00Z"}},
+    }
+    for i in range(3)
   ]
   response_page_1 = json.dumps({"commits": page1_commits})
 
-  page2_commits = [{"sha": "sha3", "commit": {"message": "msg3"}}]
+  page2_commits = [
+    {
+      "sha": "sha3",
+      "commit": {"message": "msg3", "committer": {"date": "2026-01-01T00:00:00Z"}},
+    }
+  ]
   response_page_2 = json.dumps({"commits": page2_commits})
 
   response_page_3 = json.dumps({"commits": []})

@@ -60,7 +60,7 @@ culprit-finder --repo <OWNER/REPO> --start <GOOD_SHA> --end <BAD_SHA> --workflow
 - `--cross-repo-dep`: (Optional) A cross-repository dependency in the format `owner/repo`.
 This allows finding a culprit commit in a dependency if the issue isn't found in the main repository.
 Must be used with `--dep-pin-file`.
-- `--dep-pin-file`: (Optional) Path to the file in the primary repository that pins the dependency commit SHA 
+- `--dep-pin-file`: (Optional) Path to the file in the primary repository that pins the dependency commit SHA
 (e.g., `revision.bzl`). Must be used with `--cross-repo-dep`.
 
 ### Example

@@ -7,10 +7,15 @@ This module defines the `CulpritFinder` class, which orchestrates the bisection 
 import time
 import logging
 import uuid
+from typing import Literal
 from culprit_finder import github
 
 
 CULPRIT_FINDER_WORKFLOW_NAME = "culprit_finder.yml"
+
+
+class _CommitWithSource(github.Commit):
+  source: Literal["main", "cross"]
 
 
 class CulpritFinder:
@@ -26,6 +31,7 @@ class CulpritFinder:
     github_client: github.GithubClient,
     cross_repo_dep: str | None = None,
     dep_pin_file: str | None = None,
+    cross_repo_gh_client: github.GithubClient | None = None,
   ):
     """
     Initializes the CulpritFinder instance.
@@ -49,6 +55,7 @@ class CulpritFinder:
     self._gh_client = github_client
     self._cross_repo_dep = cross_repo_dep
     self._dep_pin_file = dep_pin_file
+    self._cross_repo_gh_client = cross_repo_gh_client
 
   def _wait_for_workflow_completion(
     self,
@@ -227,21 +234,119 @@ class CulpritFinder:
 
     return commits[bad_idx]
 
-  def _get_cross_repo_commits(self) -> tuple[str, str]:
+  def _bisect_unified(
+    self,
+    merged_commits: list[_CommitWithSource],
+    main_start_sha: str,
+    cross_start_sha: str,
+  ) -> tuple[_CommitWithSource | None, str]:
+    """
+    Performs binary search on a merged timeline of commits from two repositories.
+
+    Args:
+        merged_commits: Merged and sorted list of commits from both repos.
+                        Each commit dict must have a 'source' key ('main' or 'cross').
+        main_start_sha: The known good SHA for the main repository.
+        cross_start_sha: The known good SHA for the cross repository.
+
+    Returns:
+        A tuple containing the culprit commit (or None) and the repository name.
+    """
+    good_idx = -1
+    bad_idx = len(merged_commits)
+
+    while bad_idx - good_idx > 1:
+      mid_idx = (good_idx + bad_idx) // 2
+      candidate = merged_commits[mid_idx]
+
+      current_main_sha = main_start_sha
+      current_cross_sha = cross_start_sha
+
+      found_main = False
+      found_cross = False
+
+      # Find the state of both repositories at this point in the timeline
+      for i in range(mid_idx, -1, -1):
+        commit = merged_commits[i]
+        if not found_main and commit["source"] == "main":
+          current_main_sha = commit["sha"]
+          found_main = True
+        if not found_cross and commit["source"] == "cross":
+          current_cross_sha = commit["sha"]
+          found_cross = True
+        if found_main and found_cross:
+          break
+
+      # branch_source is always main repo sha (where we run the workflow).
+      # dep_pin_commit is the cross repo sha (input to the workflow).
+      branch_name = f"culprit-finder/test-unified-{mid_idx}_{uuid.uuid4()}"
+
+      if not self._gh_client.check_branch_exists(branch_name):
+        self._gh_client.create_branch(branch_name, current_main_sha)
+        logging.info("Created branch %s on %s", branch_name, current_main_sha)
+
+      try:
+        is_good = self._test_commit(
+          candidate["sha"], branch_name, dep_pin_commit=current_cross_sha
+        )
+      finally:
+        if self._gh_client.check_branch_exists(branch_name):
+          logging.info("Deleting branch %s", branch_name)
+          self._gh_client.delete_branch(branch_name)
+
+      if is_good:
+        good_idx = mid_idx
+        logging.info(
+          "Commit '%s' with sha: %s (%s) is good",
+          candidate["message"],
+          candidate["sha"],
+          candidate["source"],
+        )
+      else:
+        bad_idx = mid_idx
+        logging.info(
+          "Commit '%s' with sha: %s (%s) is bad",
+          candidate["message"],
+          candidate["sha"],
+          candidate["source"],
+        )
+
+    if bad_idx == len(merged_commits):
+      return None, self._repo
+
+    culprit = merged_commits[bad_idx]
+    culprit_repo = self._repo if culprit["source"] == "main" else self._cross_repo_dep
+    return culprit, culprit_repo
+
+  def _get_cross_repo_commits_from_dep_pin_file(
+    self, dep_pin_file: str
+  ) -> tuple[str, str]:
     """
     Extracts the start and end commit SHAs for the cross-repo dependency.
+
+    Args:
+        dep_pin_file (str): The path to the dependency pin file.
 
     Returns:
         A tuple containing (start_commit_sha, end_commit_sha) for the dependency.
     """
-    if not self._dep_pin_file:
-      raise ValueError("Dependency pin file is not specified")
-
-    start = self._gh_client.get_file_content(self._dep_pin_file, self._start_sha)
-    end = self._gh_client.get_file_content(self._dep_pin_file, self._end_sha)
+    start = self._gh_client.get_file_content(dep_pin_file, self._start_sha)
+    end = self._gh_client.get_file_content(dep_pin_file, self._end_sha)
 
     # TODO: file extraction logic hardcoded for now
     return start.split("=")[1].strip(), end.split("=")[1].strip()
+
+  def _get_cross_repo_commits_from_date(self) -> tuple[str, str]:
+    start_commit = self._gh_client.get_commit(self._start_sha)
+    end_commit = self._gh_client.get_commit(self._end_sha)
+
+    start_date = start_commit["commit"]["committer"]["date"]
+    end_date = end_commit["commit"]["committer"]["date"]
+
+    cross_start_sha = self._cross_repo_gh_client.get_commit_at_date(start_date)
+    cross_end_sha = self._cross_repo_gh_client.get_commit_at_date(end_date)
+
+    return cross_start_sha, cross_end_sha
 
   def run_bisection(self) -> tuple[github.Commit | None, str]:
     """
@@ -267,18 +372,46 @@ class CulpritFinder:
     if not self._cross_repo_dep:
       return self._bisect(commits), self._repo
 
-    cross_repo_start, cross_repo_end = self._get_cross_repo_commits()
-    culprit_commit = self._bisect(commits, dep_pin_commit=cross_repo_start)
-    if culprit_commit:
-      return culprit_commit, self._repo
+    if self._dep_pin_file:
+      cross_repo_start, cross_repo_end = self._get_cross_repo_commits_from_dep_pin_file(
+        self._dep_pin_file
+      )
+      culprit_commit = self._bisect(commits, dep_pin_commit=cross_repo_start)
+      if culprit_commit:
+        return culprit_commit, self._repo
 
-    logging.info(
-      "All commits in target repo are good, proceeding with cross-repo dependency"
-    )
-    cross_repo_gh_client = github.GithubClient(self._cross_repo_dep)
-    cross_repo_commits = cross_repo_gh_client.compare_commits(
+      logging.info(
+        "All commits in target repo are good, proceeding with cross-repo dependency"
+      )
+      cross_repo_commits = self._cross_repo_gh_client.compare_commits(
+        cross_repo_start, cross_repo_end
+      )
+      return self._bisect(
+        cross_repo_commits, fixed_branch_commit=self._start_sha
+      ), self._cross_repo_dep
+
+    cross_repo_start, cross_repo_end = self._get_cross_repo_commits_from_date()
+    cross_repo_commits = self._cross_repo_gh_client.compare_commits(
       cross_repo_start, cross_repo_end
     )
-    return self._bisect(
-      cross_repo_commits, fixed_branch_commit=self._start_sha
-    ), self._cross_repo_dep
+
+    main_commits_with_source: list[_CommitWithSource] = []
+    for commit in commits:
+      main_commits_with_source.append({**commit, "source": "main"})
+
+    cross_repo_commits_with_source: list[_CommitWithSource] = []
+    for commit in cross_repo_commits:
+      cross_repo_commits_with_source.append({**commit, "source": "cross"})
+
+    merged_commits = main_commits_with_source + cross_repo_commits_with_source
+    merged_commits.sort(key=lambda x: x["date"])
+
+    commit_with_source, repo = self._bisect_unified(
+      merged_commits, self._start_sha, cross_repo_start
+    )
+    commit: github.Commit = {
+      "sha": commit["sha"],
+      "message": commit["message"],
+      "date": commit["date"],
+    }
+    return commit, repo

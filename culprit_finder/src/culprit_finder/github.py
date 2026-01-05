@@ -12,6 +12,7 @@ from typing import Optional, TypedDict
 class Commit(TypedDict):
   sha: str
   message: str
+  date: str
 
 
 class Workflow(TypedDict):
@@ -117,7 +118,14 @@ class GithubClient:
       all_commits.extend(commit_batch)
       page += 1
 
-    return [{"sha": c["sha"], "message": c["commit"]["message"]} for c in all_commits]
+    return [
+      {
+        "sha": c["sha"],
+        "message": c["commit"]["message"],
+        "date": c["commit"]["committer"]["date"],
+      }
+      for c in all_commits
+    ]
 
   def trigger_workflow(
     self, workflow_file: str, branch: str, inputs: dict[str, str]
@@ -241,3 +249,34 @@ class GithubClient:
     data = json.loads(output)
     content_base64 = data["content"]
     return base64.b64decode(content_base64).decode("utf-8")
+
+  def get_commit(self, sha: str) -> dict:
+    """
+    Retrieves detailed information about a specific commit.
+
+    Args:
+        sha: The SHA of the commit.
+
+    Returns:
+        A dictionary containing commit details.
+    """
+    endpoint = f"repos/{self.repo}/commits/{sha}"
+    output = self._run_command(["api", endpoint])
+    return json.loads(output)
+
+  def get_commit_at_date(self, date: str) -> str:
+    """
+    Finds the most recent commit at or before the specified date.
+
+    Args:
+        date: ISO 8601 timestamp (e.g., YYYY-MM-DDTHH:MM:SSZ).
+
+    Returns:
+        The SHA of the commit.
+    """
+    endpoint = f"repos/{self.repo}/commits?until={date}&per_page=1"
+    output = self._run_command(["api", endpoint])
+    commits = json.loads(output)
+    if not commits:
+      raise ValueError(f"No commits found before {date}")
+    return commits[0]["sha"]

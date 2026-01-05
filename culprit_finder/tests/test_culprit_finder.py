@@ -117,7 +117,7 @@ def test_test_commit_failure(mocker, finder, mock_gh_client):
 
 
 def _create_commit(sha: str, message: str) -> github.Commit:
-  return {"sha": sha, "message": message}
+  return {"sha": sha, "message": message, "date": "2026-01-01T00:00:00Z"}
 
 
 @pytest.mark.parametrize(
@@ -266,17 +266,6 @@ def test_run_bisection_cross_repo(mocker, mock_gh_client):
   start_sha = "start"
   end_sha = "end"
 
-  finder = culprit_finder.CulpritFinder(
-    repo=REPO,
-    start_sha=start_sha,
-    end_sha=end_sha,
-    workflow_file=WORKFLOW_FILE,
-    has_culprit_finder_workflow=True,
-    github_client=mock_gh_client,
-    cross_repo_dep=cross_repo_dep,
-    dep_pin_file=dep_pin_file,
-  )
-
   main_commits = [
     _create_commit("c0", "m0"),
     _create_commit("c1", "m1"),
@@ -296,11 +285,19 @@ def test_run_bisection_cross_repo(mocker, mock_gh_client):
     "COMMIT=cr_end",  # end_sha version
   ]
 
-  # Create a mock for the cross-repo GitHub client
   mock_cross_gh_client = mocker.create_autospec(github.GithubClient, instance=True)
   mock_cross_gh_client.compare_commits.return_value = cross_commits
-  # Patch the GithubClient constructor to return our mock for the cross-repo dep
-  mocker.patch("culprit_finder.github.GithubClient", return_value=mock_cross_gh_client)
+  finder = culprit_finder.CulpritFinder(
+    repo=REPO,
+    start_sha=start_sha,
+    end_sha=end_sha,
+    workflow_file=WORKFLOW_FILE,
+    has_culprit_finder_workflow=True,
+    github_client=mock_gh_client,
+    cross_repo_dep=cross_repo_dep,
+    dep_pin_file=dep_pin_file,
+    cross_repo_gh_client=mock_cross_gh_client,
+  )
 
   # Mock test results:
   # 1. Main repo bisect:
@@ -361,7 +358,7 @@ def test_get_cross_repo_commits_success(mock_gh_client):
     "COMMIT=sha456",
   ]
 
-  start, end = finder._get_cross_repo_commits()
+  start, end = finder._get_cross_repo_commits_from_dep_pin_file(dep_pin_file)
 
   assert start == "sha123"
   assert end == "sha456"
@@ -369,19 +366,3 @@ def test_get_cross_repo_commits_success(mock_gh_client):
   assert mock_gh_client.get_file_content.call_count == 2
   mock_gh_client.get_file_content.assert_any_call(dep_pin_file, start_sha)
   mock_gh_client.get_file_content.assert_any_call(dep_pin_file, end_sha)
-
-
-def test_get_cross_repo_commits_no_file(mock_gh_client):
-  """Tests that ValueError is raised when dep_pin_file is missing."""
-  finder = culprit_finder.CulpritFinder(
-    repo=REPO,
-    start_sha="start_sha",
-    end_sha="end_sha",
-    workflow_file=WORKFLOW_FILE,
-    has_culprit_finder_workflow=True,
-    github_client=mock_gh_client,
-    dep_pin_file=None,
-  )
-
-  with pytest.raises(ValueError, match="Dependency pin file is not specified"):
-    finder._get_cross_repo_commits()
