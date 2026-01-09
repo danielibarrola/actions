@@ -337,7 +337,7 @@ class GithubClient:
     run = self.get_run(str(run_id))
     return run.get("jobs", [])
 
-  def get_run_from_url(self, url: str) -> Run:
+  def get_run_and_job_from_url(self, url: str) -> tuple[Run, Job | None]:
     """
     Retrieves workflow run details using a GitHub Actions URL.
 
@@ -349,17 +349,26 @@ class GithubClient:
         url: The full GitHub URL to the workflow run or specific job.
 
     Returns:
-        A Run object containing metadata for the extracted run ID.
+        A tuple containing the Run object and Job object (if applicable).
+        Returns (None, None) if the run ID cannot be parsed.
 
     Raises:
         ValueError: If the run ID cannot be parsed from the provided URL.
     """
-    match = re.search(r"actions/runs/(\d+)", url)
-    if not match:
+    run_id_match = re.search(r"actions/runs/(\d+)", url)
+    if not run_id_match:
       raise ValueError(f"Could not extract run ID from URL: {url}")
+    job_id_match = re.search(r"job/(\d+)", url)
 
-    run_id = match.group(1)
-    return self.get_run(run_id)
+    run_id = run_id_match.group(1)
+    run = self.get_run(run_id)
+
+    job: None | Job = None
+    if job_id_match:
+      job_id = int(job_id_match.group(1))
+      job = next((j for j in run["jobs"] if j["databaseId"] == job_id), None)
+
+    return run, job
 
   def find_previous_successful_run(self, run: Run) -> Run:
     """

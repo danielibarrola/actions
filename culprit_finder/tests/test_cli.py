@@ -364,7 +364,7 @@ def test_cli_with_url(monkeypatch, mocker):
   )
   patches = _mock_state(mocker)
 
-  mock_gh_client_instance.get_run_from_url.return_value = {
+  run: github.Run = {
     "headSha": "sha_from_url",
     "status": "failure",
     "workflowName": "Test Workflow",
@@ -373,7 +373,10 @@ def test_cli_with_url(monkeypatch, mocker):
     "headBranch": "main",
     "event": "push",
     "createdAt": "2023-01-01T00:00:00Z",
+    "databaseId": 1234,
+    "url": "https://github.com/owner/repo/actions/runs/1234",
   }
+  mock_gh_client_instance.get_run_and_job_from_url.return_value = run, None
   mock_gh_client_instance.get_workflow.return_value = {
     "path": ".github/workflows/test.yml"
   }
