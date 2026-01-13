@@ -6,7 +6,10 @@ import logging
 from unittest import mock
 from typing import TypedDict
 
-from culprit_finder import cli, github
+
+from culprit_finder import cli
+
+import tests.factories as factories
 
 
 def _get_culprit_finder_command(
@@ -60,7 +63,7 @@ def test_invalid_repo_format(monkeypatch, capsys, args, expected_error_msg):
 
 
 def _mock_gh_client(
-  mocker, is_authenticated: bool, workflows: list[github.Workflow] | None = None
+  mocker, is_authenticated: bool, workflows: list[dict[str, str]] | None = None
 ):
   mock_gh_client_class = mocker.patch("culprit_finder.github.GithubClient")
   mock_gh_client_instance = mock_gh_client_class.return_value
@@ -69,7 +72,9 @@ def _mock_gh_client(
     return_value="fake-token" if is_authenticated else None,
   )
   if workflows:
-    mock_gh_client_instance.get_workflows.return_value = workflows
+    mock_gh_client_instance.get_workflows.return_value = [
+      factories.create_workflow(mocker, wf["name"], wf["path"]) for wf in workflows
+    ]
   return mock_gh_client_instance
 
 
@@ -149,9 +154,9 @@ def test_cli_success(
   monkeypatch,
   mocker,
   capsys,
-  workflows_list: list[github.Workflow],
+  workflows_list: list[dict[str, str]],
   has_culprit_workflow: bool,
-  found_culprit_commit: github.Commit | None,
+  found_culprit_commit: dict[str, str] | None,
   expected_output: str,
 ):
   """
@@ -161,7 +166,13 @@ def test_cli_success(
   """
   mock_finder = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
   mock_gh_client_instance = _mock_gh_client(mocker, True, workflows_list)
-  mock_finder.return_value.run_bisection.return_value = found_culprit_commit
+  mock_finder.return_value.run_bisection.return_value = (
+    factories.create_commit(
+      mocker, sha=found_culprit_commit["sha"], message=found_culprit_commit["message"]
+    )
+    if found_culprit_commit
+    else None
+  )
 
   monkeypatch.setattr(
     sys,
@@ -223,7 +234,9 @@ def test_cli_state_management(
   """Tests state loading, user prompt, and cleanup."""
   mock_finder_cls = mocker.patch("culprit_finder.cli.culprit_finder.CulpritFinder")
   mock_finder = mock_finder_cls.return_value
-  mock_finder.run_bisection.return_value = {"sha": "found_sha", "message": "msg"}
+  mock_finder.run_bisection.return_value = factories.create_commit(
+    mocker, sha="found_sha", message="msg"
+  )
 
   mock_gh_client_instance = _mock_gh_client(mocker, True)
   existing_state = (

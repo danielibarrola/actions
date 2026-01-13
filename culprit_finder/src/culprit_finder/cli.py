@@ -146,7 +146,7 @@ def main() -> None:
     }
 
   has_culprit_finder_workflow = any(
-    wf["path"] == ".github/workflows/culprit_finder.yml"
+    wf.path == ".github/workflows/culprit_finder.yml"
     for wf in gh_client.get_workflows()
   )
 
@@ -166,9 +166,9 @@ def main() -> None:
   try:
     culprit_commit = finder.run_bisection()
     if culprit_commit:
-      commit_message = culprit_commit["message"].splitlines()[0]
+      commit_message = culprit_commit.commit.message.splitlines()[0]
       print(
-        f"\nThe culprit commit is: {commit_message} (SHA: {culprit_commit['sha']})",
+        f"\nThe culprit commit is: {commit_message} (SHA: {culprit_commit.sha})",
       )
     else:
       print("No culprit commit found.")

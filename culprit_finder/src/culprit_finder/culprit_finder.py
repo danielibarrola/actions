@@ -7,6 +7,10 @@ This module defines the `CulpritFinder` class, which orchestrates the bisection 
 import time
 import logging
 import uuid
+
+from github.Commit import Commit
+from github.WorkflowRun import WorkflowRun
+
 from culprit_finder import github
 from culprit_finder import culprit_finder_state
 
@@ -59,7 +63,7 @@ class CulpritFinder:
     previous_run_id: int | None,
     poll_interval=30,
     timeout=7200,  # 2 hours
-  ) -> github.Run | None:
+  ) -> WorkflowRun | None:
     """
     Polls for the completion of the most recent workflow_dispatch run on the branch.
 
@@ -87,21 +91,21 @@ class CulpritFinder:
         time.sleep(poll_interval)
         continue
 
-      if previous_run_id and latest_run["databaseId"] == previous_run_id:
+      if previous_run_id and latest_run.id == previous_run_id:
         logging.info(
           "Waiting for new workflow run to appear...",
         )
         time.sleep(poll_interval)
         continue
 
-      if latest_run["status"] == "completed":
+      if latest_run.status == "completed":
         return latest_run
 
       logging.info(
         "Run for %s on branch %s is still in progress (%s)...",
         commit_sha,
         branch_name,
-        latest_run["status"],
+        latest_run.status,
       )
 
       time.sleep(poll_interval)
@@ -141,7 +145,7 @@ class CulpritFinder:
     previous_run = self._gh_client.get_latest_run(
       workflow_to_trigger, branch_name, event="workflow_dispatch"
     )
-    previous_run_id = previous_run["databaseId"] if previous_run else None
+    previous_run_id = previous_run.id if previous_run else None
 
     self._gh_client.trigger_workflow(
       workflow_to_trigger,
@@ -159,9 +163,9 @@ class CulpritFinder:
       logging.error("Workflow failed to complete")
       return False
 
-    return run["conclusion"] == "success"
+    return run.conclusion == "success"
 
-  def run_bisection(self) -> github.Commit | None:
+  def run_bisection(self) -> Commit | None:
     """
     Runs bisection logic (binary search) to find the culprit commit for a GitHub workflow.
 
@@ -172,7 +176,7 @@ class CulpritFinder:
     4. Narrows down the range of commits based on the workflow result (success/failure).
 
     Returns:
-      github.Commit | None: The commit identified through the bisection process
+      Commit | None: The commit identified through the bisection process
       as the cause of the specified issue. If the bisection process does not
       identify a commit, None is returned.
     """
@@ -187,7 +191,7 @@ class CulpritFinder:
 
     while bad_idx - good_idx > 1:
       mid_idx = (good_idx + bad_idx) // 2
-      commit_sha = commits[mid_idx]["sha"]
+      commit_sha = commits[mid_idx].sha
 
       if commit_sha in self._state["cache"]:
         logging.info("Using cached result for commit %s", commit_sha)
