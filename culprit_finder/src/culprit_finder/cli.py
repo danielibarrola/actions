@@ -14,6 +14,7 @@ import re
 from culprit_finder import culprit_finder
 from culprit_finder import culprit_finder_state
 from culprit_finder import github_client
+from culprit_finder import workflow_validation
 
 logging.basicConfig(
   level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -148,6 +149,11 @@ def main() -> None:
     wf.path == ".github/workflows/culprit_finder.yml"
     for wf in gh_client.get_workflows()
   )
+  if has_culprit_finder_workflow:
+    validator = workflow_validation.CulpritWorkflowValidator(
+      start, end, workflow_file_name, gh_client
+    )
+    validator.validate()
 
   logging.info("Using culprit finder workflow: %s", has_culprit_finder_workflow)
 

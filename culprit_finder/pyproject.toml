@@ -12,6 +12,7 @@ classifiers = [
 
 dependencies = [
     "PyGithub",
+    "PyYAML"
 ]
 
 [project.scripts]

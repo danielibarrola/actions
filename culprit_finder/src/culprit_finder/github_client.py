@@ -2,6 +2,7 @@
 Module for interacting with the GitHub API via PyGithub.
 """
 
+import base64
 import logging
 import os
 import re
@@ -254,6 +255,35 @@ class GithubClient:
       )
 
     return last_successful_run
+
+  def get_file_content(self, file_path: str, ref: str) -> str:
+    """
+    Retrieves the content of a file at a specific commit or branch.
+
+    Args:
+        file_path: The path to the file in the repository.
+        ref: commit SHA, tag, or branch name.
+
+    Returns:
+        The content of the file as a string.
+    """
+    try:
+      content = self._repo.get_contents(file_path, ref=ref)
+      return base64.b64decode(content.content).decode("utf-8")
+    except github.GithubException as e:
+      raise ValueError(f"Failed to retrieve file content: {e}")
+
+  def get_commit(self, sha: str) -> Commit:
+    """
+    Retrieves detailed information about a specific commit.
+
+    Args:
+        sha: The SHA of the commit.
+
+    Returns:
+        A dictionary containing commit details.
+    """
+    return self._repo.get_commit(sha)
 
 
 def get_github_token() -> str | None:
