@@ -155,6 +155,7 @@ class GithubClient:
         branch_name: The name of the branch to delete.
     """
     ref = self._repo.get_git_ref(f"heads/{branch_name}")
+    ref.complete()  # fixes branch not found error
     ref.delete()
 
   def get_workflows(self) -> list[Workflow]:
